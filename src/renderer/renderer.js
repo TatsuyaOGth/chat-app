@@ -198,7 +198,7 @@ newChatBtn.addEventListener('click', startNewChat);
 messageInput.addEventListener('input', updateSendButton);
 
 messageInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     sendMessage();
   }
