@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat App</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Sidebar -->
+      <aside id="sidebar">
+        <div class="sidebar-header">
+          <h1 class="app-title">Chat App</h1>
+        </div>
+
+        <div class="model-section">
+          <label for="model-select" class="label">Model</label>
+          <div class="model-row">
+            <select id="model-select" class="select"></select>
+            <button id="refresh-models-btn" class="icon-btn" title="Refresh models" aria-label="Refresh models">
+              &#x21bb;
+            </button>
+          </div>
+        </div>
+
+        <div class="sidebar-actions">
+          <button id="new-chat-btn" class="btn btn-secondary">New chat</button>
+        </div>
+
+        <div id="status-bar" class="status-bar" aria-live="polite"></div>
+      </aside>
+
+      <!-- Main chat area -->
+      <main id="main">
+        <div id="messages" role="log" aria-label="Chat messages" aria-live="polite"></div>
+
+        <form id="input-form" class="input-form" autocomplete="off">
+          <textarea
+            id="message-input"
+            class="message-input"
+            placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
+            rows="3"
+            aria-label="Message input"
+          ></textarea>
+          <button id="send-btn" type="submit" class="btn btn-primary" disabled>Send</button>
+        </form>
+      </main>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

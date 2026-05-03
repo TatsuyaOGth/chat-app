@@ -1,0 +1,20 @@
+{
+  "name": "chat-app",
+  "version": "0.1.0",
+  "description": "Simple chat app for local LLM (Ollama)",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "electron",
+    "ollama",
+    "llm",
+    "chat"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^41.5.0"
+  }
+}
