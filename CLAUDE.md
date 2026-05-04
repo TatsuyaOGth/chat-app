@@ -1,49 +1,49 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+このファイルは、リポジトリで作業する Claude Code (claude.ai/code) へのガイダンスを提供します。
 
-## Commands
+## コマンド
 
 ```bash
-npm start        # Launch the Electron app (requires Ollama running locally)
+npm start        # Electron アプリを起動（事前に Ollama をローカルで起動しておく必要あり）
 ```
 
-There is no build step, no bundler, no transpiler, and no test suite. JavaScript is loaded directly by Electron.
+ビルドステップ、バンドラー、トランスパイラー、テストスイートはありません。JavaScript は Electron によって直接読み込まれます。
 
-**Prerequisite:** Ollama must be running on `localhost:11434` before launching the app. Install models with `ollama pull <model>` (e.g. `ollama pull llama3`).
+**前提条件:** アプリ起動前に Ollama が `localhost:11434` で動作している必要があります。`ollama pull <モデル名>` でモデルをインストールしてください（例: `ollama pull llama3`）。
 
-## Architecture
+## アーキテクチャ
 
-This is an Electron desktop app that provides a chat UI for locally-running Ollama LLMs. It follows the standard Electron three-process model:
+ローカルで動作する Ollama LLM 向けのチャット UI を提供する Electron デスクトップアプリです。標準的な Electron の3プロセスモデルに従っています。
 
 ```
-Renderer (browser context)
-  └─ window.ollama API (exposed via contextBridge in preload.js)
-       └─ IPC (ipcRenderer.invoke / ipcRenderer.send)
-            └─ Main process (src/main.js)
-                 └─ HTTP to Ollama at localhost:11434
+レンダラー（ブラウザコンテキスト）
+  └─ window.ollama API（preload.js の contextBridge 経由で公開）
+       └─ IPC（ipcRenderer.invoke / ipcRenderer.send）
+            └─ メインプロセス（src/main.js）
+                 └─ localhost:11434 の Ollama への HTTP 通信
 ```
 
-### Process boundaries
+### プロセスの役割分担
 
-- **`src/main.js`** — Main process. Owns all network I/O (Node.js `http` module). Implements two IPC handlers:
-  - `ollama:get-models` (invoke) — calls `GET /api/tags`, returns model name list.
-  - `ollama:chat` (on) — starts a streaming POST to `/api/chat`, forwards newline-delimited JSON chunks back to the renderer as `ollama:chat:chunk` events, or `ollama:chat:error` on failure. Returns an abort function but does not expose it via IPC (streaming cannot be cancelled from the renderer currently).
+- **`src/main.js`** — メインプロセス。すべてのネットワーク I/O を担当（Node.js の `http` モジュール）。2つの IPC ハンドラーを実装：
+  - `ollama:get-models`（invoke）— `GET /api/tags` を呼び出し、モデル名のリストを返す。
+  - `ollama:chat`（on）— `/api/chat` へのストリーミング POST を開始し、改行区切りの JSON チャンクを `ollama:chat:chunk` イベントとしてレンダラーへ転送。失敗時は `ollama:chat:error` を送信。中断関数を返すが、IPC 経由では公開していないため現状レンダラーからストリーミングをキャンセルすることはできない。
 
-- **`src/preload.js`** — Runs with Node.js access but in the renderer's context. Uses `contextBridge.exposeInMainWorld('ollama', ...)` to expose a typed, minimal API. The renderer has zero direct Node.js or network access — all Ollama calls must go through this bridge.
+- **`src/preload.js`** — Node.js アクセス権を持ちつつレンダラーのコンテキストで動作する。`contextBridge.exposeInMainWorld('ollama', ...)` を使って、型付きの最小限の API を公開する。レンダラーは Node.js やネットワークへの直接アクセスを持たず、すべての Ollama 呼び出しはこのブリッジを経由する。
 
-- **`src/renderer/`** — Plain HTML/CSS/JS, no framework. `renderer.js` manages UI state (`messages[]`, `isGenerating`, `requestCounter`), renders chat bubbles, and subscribes/unsubscribes to IPC chunk events per-request using the `requestId` pattern to avoid cross-request bleed.
+- **`src/renderer/`** — フレームワーク不使用の素の HTML/CSS/JS。`renderer.js` が UI の状態（`messages[]`、`isGenerating`、`requestCounter`）を管理し、チャットバブルをレンダリングし、リクエストごとに `requestId` パターンを使って IPC チャンクイベントの購読・解除を行い、リクエスト間の混線を防ぐ。
 
-### IPC event flow for streaming
+### ストリーミングの IPC イベントフロー
 
-1. Renderer calls `window.ollama.chat(requestId, model, messages)` (fire-and-forget `ipcRenderer.send`).
-2. Main process opens a streaming HTTP connection to Ollama, parses newline-delimited JSON.
-3. Each token fires `ollama:chat:chunk` → `{ requestId, content, done: false }` back to renderer.
-4. Final chunk fires `{ requestId, content: '', done: true }`.
-5. Renderer filters events by `requestId` and tears down listeners in `finish()`.
+1. レンダラーが `window.ollama.chat(requestId, model, messages)` を呼び出す（fire-and-forget の `ipcRenderer.send`）。
+2. メインプロセスが Ollama へのストリーミング HTTP 接続を開き、改行区切りの JSON をパース。
+3. 各トークンが `ollama:chat:chunk` → `{ requestId, content, done: false }` としてレンダラーへ転送される。
+4. 最終チャンクで `{ requestId, content: '', done: true }` が送信される。
+5. レンダラーは `requestId` でイベントをフィルタリングし、`finish()` でリスナーを解除する。
 
-### Security posture
+### セキュリティ方針
 
-- `contextIsolation: true`, `nodeIntegration: false` — renderer is sandboxed.
-- CSP in `index.html`: `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'` — no inline scripts, no external resources.
-- All CSS theming uses CSS custom properties defined in `:root` in `styles.css`. Dark theme only.
+- `contextIsolation: true`、`nodeIntegration: false` — レンダラーはサンドボックス化されている。
+- `index.html` の CSP: `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'` — インラインスクリプト・外部リソースは禁止。
+- すべての CSS テーマは `styles.css` の `:root` で定義された CSS カスタムプロパティを使用。ダークテーマのみ。
