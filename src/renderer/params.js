@@ -1,24 +1,22 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Parameter schema
+// Parameter schema — all 23 parameters from spec §6
 // ---------------------------------------------------------------------------
 //
-// Phase 2 ships only the core parameters needed to validate the editing flow.
-// Phase 5 will extend PARAM_SCHEMA with the remaining 17 parameters from the
-// spec (mirostat, top_k, repeat_penalty, stop, num_gpu, …).
+// type values:
+//   'select-model' — dropdown populated from Ollama model list
+//   'textarea'     — multi-line text (system prompt)
+//   'slider'       — range slider + number input
+//   'number'       — plain number input
+//   'select'       — static options list  (e.g. mirostat mode)
+//   'tags'         — array of strings with chip UI (stop sequences)
 //
-// Each entry describes a single editable parameter:
-//   key   — the Ollama option name (or top-level field for `model`/`system`)
-//   label — Japanese label shown next to the row
-//   group — section header used for grouping in the editor
-//   type  — UI control: 'select-model' | 'textarea' | 'slider' | 'number'
-//   min/max/step/help — only used by some types
-//
-// All values are stored as `null` when the user hasn't customized them; the
-// main process strips `null` keys before sending to Ollama.
+// All values default to `null`; the main process strips nulls before
+// sending to Ollama so its defaults apply.
 
 const PARAM_SCHEMA = [
+  // --- 基本 -----------------------------------------------------------------
   {
     key: 'model',
     group: '基本',
@@ -39,10 +37,12 @@ const PARAM_SCHEMA = [
     label: 'temperature',
     type: 'slider',
     min: 0,
-    max: 1,
+    max: 2,
     step: 0.05,
-    help: '出力のランダム性 (0〜1)',
+    help: '出力のランダム性 (0〜2、デフォルト 0.8)',
   },
+
+  // --- サンプリング ---------------------------------------------------------
   {
     key: 'top_p',
     group: 'サンプリング',
@@ -52,6 +52,106 @@ const PARAM_SCHEMA = [
     max: 1,
     step: 0.05,
     help: 'トークン選択の多様性 (0〜1)',
+  },
+  {
+    key: 'top_k',
+    group: 'サンプリング',
+    label: 'top_k',
+    type: 'number',
+    min: 0,
+    step: 1,
+    help: '上位 K トークンから選択 (0 = 無効)',
+  },
+  {
+    key: 'repeat_penalty',
+    group: 'サンプリング',
+    label: 'repeat_penalty',
+    type: 'slider',
+    min: 0,
+    max: 2,
+    step: 0.05,
+    help: '繰り返しトークンへのペナルティ',
+  },
+  {
+    key: 'presence_penalty',
+    group: 'サンプリング',
+    label: 'presence_penalty',
+    type: 'slider',
+    min: -2,
+    max: 2,
+    step: 0.05,
+    help: '既出トークンへのペナルティ（新トピック促進）',
+  },
+  {
+    key: 'frequency_penalty',
+    group: 'サンプリング',
+    label: 'frequency_penalty',
+    type: 'slider',
+    min: -2,
+    max: 2,
+    step: 0.05,
+    help: '出現頻度の高いトークンへのペナルティ',
+  },
+  {
+    key: 'tfs_z',
+    group: 'サンプリング',
+    label: 'tfs_z',
+    type: 'number',
+    min: 0,
+    step: 0.1,
+    help: 'Tail Free Sampling (1.0 = 無効)',
+  },
+  {
+    key: 'typical_p',
+    group: 'サンプリング',
+    label: 'typical_p',
+    type: 'number',
+    min: 0,
+    max: 1,
+    step: 0.05,
+    help: 'Locally Typical Sampling (1.0 = 無効)',
+  },
+
+  // --- Mirostat ------------------------------------------------------------
+  {
+    key: 'mirostat',
+    group: 'Mirostat',
+    label: 'mirostat',
+    type: 'select',
+    options: [
+      { value: 0, label: '0 — 無効' },
+      { value: 1, label: '1 — Mirostat' },
+      { value: 2, label: '2 — Mirostat 2.0' },
+    ],
+    help: 'Mirostat サンプリングモード',
+  },
+  {
+    key: 'mirostat_tau',
+    group: 'Mirostat',
+    label: 'mirostat_tau',
+    type: 'number',
+    min: 0,
+    step: 0.1,
+    help: '目標エントロピー（デフォルト 5.0）',
+  },
+  {
+    key: 'mirostat_eta',
+    group: 'Mirostat',
+    label: 'mirostat_eta',
+    type: 'number',
+    min: 0,
+    step: 0.01,
+    help: '学習率（デフォルト 0.1）',
+  },
+
+  // --- 生成制御 -------------------------------------------------------------
+  {
+    key: 'num_predict',
+    group: '生成制御',
+    label: 'num_predict',
+    type: 'number',
+    step: 1,
+    help: '最大生成トークン数 (-1 = 無制限)',
   },
   {
     key: 'num_ctx',
@@ -70,6 +170,33 @@ const PARAM_SCHEMA = [
     step: 1,
     help: '再現性のための乱数シード',
   },
+  {
+    key: 'stop',
+    group: '生成制御',
+    label: 'stop',
+    type: 'tags',
+    help: '生成停止トークン (Enter で追加)',
+  },
+
+  // --- システム -------------------------------------------------------------
+  {
+    key: 'num_gpu',
+    group: 'システム',
+    label: 'num_gpu',
+    type: 'number',
+    min: 0,
+    step: 1,
+    help: '使用する GPU レイヤー数',
+  },
+  {
+    key: 'num_thread',
+    group: 'システム',
+    label: 'num_thread',
+    type: 'number',
+    min: 1,
+    step: 1,
+    help: '使用する CPU スレッド数',
+  },
 ];
 
 const PARAM_GROUPS = ['基本', 'サンプリング', 'Mirostat', '生成制御', 'システム'];
@@ -85,6 +212,7 @@ function emptyParams() {
 function isCustomized(value) {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string' && value.trim() === '') return false;
+  if (Array.isArray(value) && value.length === 0) return false;
   return true;
 }
 
@@ -92,23 +220,12 @@ function isCustomized(value) {
 // Row rendering
 // ---------------------------------------------------------------------------
 
-/**
- * Render a single parameter row.
- *
- * @param {object} spec      One entry from PARAM_SCHEMA.
- * @param {*}      value     Current value (null = use Ollama default).
- * @param {object} ctx       Shared rendering context.
- * @param {string[]} ctx.modelOptions  Available model names (for 'select-model').
- * @param {function(key, value): void} ctx.onChange  Called when the value changes.
- * @returns {HTMLElement}
- */
 function renderParamRow(spec, value, ctx) {
   const row = document.createElement('div');
   row.classList.add('param-row');
   row.dataset.key = spec.key;
   if (isCustomized(value)) row.classList.add('param-row--customized');
 
-  // Status dot + label
   const header = document.createElement('div');
   header.classList.add('param-row__header');
 
@@ -134,7 +251,6 @@ function renderParamRow(spec, value, ctx) {
   header.appendChild(reset);
   row.appendChild(header);
 
-  // Control
   const control = renderControl(spec, value, ctx);
   control.classList.add('param-row__control');
   row.appendChild(control);
@@ -144,14 +260,12 @@ function renderParamRow(spec, value, ctx) {
 
 function renderControl(spec, value, ctx) {
   switch (spec.type) {
-    case 'select-model':
-      return renderModelSelect(spec, value, ctx);
-    case 'textarea':
-      return renderTextarea(spec, value, ctx);
-    case 'slider':
-      return renderSlider(spec, value, ctx);
-    case 'number':
-      return renderNumber(spec, value, ctx);
+    case 'select-model': return renderModelSelect(spec, value, ctx);
+    case 'textarea':     return renderTextarea(spec, value, ctx);
+    case 'slider':       return renderSlider(spec, value, ctx);
+    case 'number':       return renderNumber(spec, value, ctx);
+    case 'select':       return renderSelect(spec, value, ctx);
+    case 'tags':         return renderTags(spec, value, ctx);
     default: {
       const div = document.createElement('div');
       div.textContent = `(unsupported type: ${spec.type})`;
@@ -176,8 +290,6 @@ function renderModelSelect(spec, value, ctx) {
     select.appendChild(opt);
   }
 
-  // If the saved model isn't in the available list (e.g. uninstalled), still
-  // show it so the user can see what was selected.
   if (value && !(ctx.modelOptions || []).includes(value)) {
     const opt = document.createElement('option');
     opt.value = value;
@@ -189,7 +301,6 @@ function renderModelSelect(spec, value, ctx) {
   select.addEventListener('change', () => {
     ctx.onChange(spec.key, select.value === '' ? null : select.value);
   });
-
   return select;
 }
 
@@ -229,7 +340,6 @@ function renderSlider(spec, value, ctx) {
   range.value = display === '' ? String((spec.min + spec.max) / 2) : display;
   number.value = display;
 
-  // Updating either control updates the other and reports up.
   const commit = (raw) => {
     if (raw === '' || raw === null || Number.isNaN(Number(raw))) {
       ctx.onChange(spec.key, null);
@@ -260,54 +370,149 @@ function renderNumber(spec, value, ctx) {
   input.value = value === null || value === undefined ? '' : String(value);
   input.addEventListener('change', () => {
     const v = input.value;
-    if (v === '' || Number.isNaN(Number(v))) {
-      ctx.onChange(spec.key, null);
-    } else {
-      ctx.onChange(spec.key, Number(v));
-    }
+    ctx.onChange(spec.key, v === '' || Number.isNaN(Number(v)) ? null : Number(v));
   });
   return input;
 }
 
+function renderSelect(spec, value, ctx) {
+  const select = document.createElement('select');
+  select.classList.add('select');
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '（デフォルト）';
+  select.appendChild(placeholder);
+
+  for (const opt of spec.options || []) {
+    const el = document.createElement('option');
+    el.value = String(opt.value);
+    el.textContent = opt.label;
+    select.appendChild(el);
+  }
+
+  select.value = value !== null && value !== undefined ? String(value) : '';
+  select.addEventListener('change', () => {
+    const v = select.value;
+    ctx.onChange(spec.key, v === '' ? null : Number(v));
+  });
+  return select;
+}
+
+/** Tag-chip input for string[] values (e.g. stop sequences). */
+function renderTags(spec, value, ctx) {
+  const currentTags = Array.isArray(value) ? [...value] : [];
+
+  const wrap = document.createElement('div');
+  wrap.classList.add('tags-wrap');
+
+  const chipList = document.createElement('div');
+  chipList.classList.add('tags-chips');
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.classList.add('tags-input');
+  input.placeholder = 'Enter で追加';
+
+  function rebuildChips() {
+    chipList.innerHTML = '';
+    for (let i = 0; i < currentTags.length; i++) {
+      const chip = document.createElement('span');
+      chip.classList.add('tag-chip');
+
+      const text = document.createElement('span');
+      text.classList.add('tag-chip__text');
+      text.textContent = currentTags[i];
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.classList.add('tag-chip__del');
+      del.textContent = '×';
+      del.setAttribute('aria-label', `「${currentTags[i]}」を削除`);
+      del.addEventListener('click', () => {
+        currentTags.splice(i, 1);
+        ctx.onChange(spec.key, currentTags.length ? [...currentTags] : null);
+      });
+
+      chip.appendChild(text);
+      chip.appendChild(del);
+      chipList.appendChild(chip);
+    }
+  }
+
+  rebuildChips();
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const tag = input.value.trim();
+    if (!tag || currentTags.includes(tag)) { input.value = ''; return; }
+    currentTags.push(tag);
+    input.value = '';
+    ctx.onChange(spec.key, [...currentTags]);
+  });
+
+  wrap.appendChild(chipList);
+  wrap.appendChild(input);
+  return wrap;
+}
+
 // ---------------------------------------------------------------------------
-// Editor (full re-render)
+// Editor (full re-render with collapsible groups)
 // ---------------------------------------------------------------------------
 
-/**
- * Render the entire parameter editor into `root`, clearing previous content.
- * Re-rendering on every value change keeps the implementation simple and
- * predictable; the editor is small enough that perf is not a concern.
- */
 function renderParamEditor(root, params, ctx) {
+  // Persist which groups are open across re-renders.
+  const openGroups = new Set();
+  root.querySelectorAll('details[open]').forEach((d) => {
+    openGroups.add(d.dataset.group);
+  });
+  // Default: open '基本' on first render.
+  if (openGroups.size === 0) openGroups.add('基本');
+
   root.innerHTML = '';
 
   for (const groupName of PARAM_GROUPS) {
     const specsInGroup = PARAM_SCHEMA.filter((s) => s.group === groupName);
     if (specsInGroup.length === 0) continue;
 
-    const section = document.createElement('section');
-    section.classList.add('param-group');
+    const details = document.createElement('details');
+    details.classList.add('param-group');
+    details.dataset.group = groupName;
+    if (openGroups.has(groupName)) details.open = true;
 
-    const heading = document.createElement('h2');
-    heading.classList.add('param-group__heading');
-    heading.textContent = groupName;
-    section.appendChild(heading);
+    const summary = document.createElement('summary');
+    summary.classList.add('param-group__heading');
 
-    for (const spec of specsInGroup) {
-      section.appendChild(renderParamRow(spec, params[spec.key] ?? null, ctx));
+    // Count customized params in this group for a badge.
+    const customCount = specsInGroup.filter(
+      (s) => isCustomized(params[s.key] ?? null)
+    ).length;
+
+    const titleSpan = document.createElement('span');
+    titleSpan.textContent = groupName;
+    summary.appendChild(titleSpan);
+
+    if (customCount > 0) {
+      const badge = document.createElement('span');
+      badge.classList.add('param-group__badge');
+      badge.textContent = String(customCount);
+      summary.appendChild(badge);
     }
 
-    root.appendChild(section);
+    details.appendChild(summary);
+
+    for (const spec of specsInGroup) {
+      details.appendChild(renderParamRow(spec, params[spec.key] ?? null, ctx));
+    }
+
+    root.appendChild(details);
   }
 }
 
 // ---------------------------------------------------------------------------
 // Splitting params for the chat request
 // ---------------------------------------------------------------------------
-//
-// `system` and `model` are top-level fields on the chat IPC payload; everything
-// else goes into `options`. `null` values are forwarded as-is and stripped by
-// the main process before the body hits Ollama.
 
 function splitParamsForChat(params) {
   const { model, system, ...rest } = params || {};
@@ -318,9 +523,6 @@ function splitParamsForChat(params) {
   };
 }
 
-// Expose a tiny module on `window` so renderer.js can use it without any
-// build step (CSP forbids inline scripts; multiple <script> tags share the
-// global scope as plain non-modules).
 window.Params = {
   PARAM_SCHEMA,
   PARAM_GROUPS,
