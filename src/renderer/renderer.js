@@ -16,8 +16,8 @@ let requestCounter = 0;
 /** Cached list of available Ollama model names (used by the model dropdown). */
 let modelOptions = [];
 
-/** All saved templates, in display order. */
-let templates = [];
+/** All saved templates, in display order. Renamed to avoid clash with window.templates. */
+let templateList = [];
 
 /** ID of the currently selected template, or null when editing unsaved values. */
 let activeTemplateId = null;
@@ -29,8 +29,8 @@ let activeTemplateId = null;
  */
 let workingParams = window.Params.emptyParams();
 
-/** All sessions, in storage order (newest first). */
-let sessions = [];
+/** All sessions, in storage order (newest first). Renamed to avoid clash with window.sessions. */
+let sessionList = [];
 
 /**
  * ID of the active session.
@@ -51,11 +51,17 @@ const sendBtn = document.getElementById('send-btn');
 const statusBar = document.getElementById('status-bar');
 const newSessionBtn = document.getElementById('new-session-btn');
 const sessionListEl = document.getElementById('session-list');
+const settingsBtn = document.getElementById('settings-btn');
 
 const templateSelect = document.getElementById('template-select');
 const paramEditor = document.getElementById('param-editor');
 const saveTemplateBtn = document.getElementById('save-template-btn');
 const newTemplateBtn = document.getElementById('new-template-btn');
+const templateNameInput = document.getElementById('template-name-input');
+
+const settingsModal = document.getElementById('settings-modal');
+const settingsCloseBtn = document.getElementById('settings-close-btn');
+const settingsTemplateList = document.getElementById('settings-template-list');
 
 // ---------------------------------------------------------------------------
 // Status bar
@@ -97,7 +103,7 @@ async function loadModels() {
 // ---------------------------------------------------------------------------
 
 async function loadTemplates() {
-  templates = await window.templates.list();
+  templateList = await window.templates.list();
   renderTemplateSelect();
 }
 
@@ -109,7 +115,7 @@ function renderTemplateSelect() {
   placeholder.textContent = '（新規 / 未保存）';
   templateSelect.appendChild(placeholder);
 
-  for (const t of templates) {
+  for (const t of templateList) {
     const opt = document.createElement('option');
     opt.value = t.id;
     opt.textContent = t.name;
@@ -123,10 +129,12 @@ function renderTemplateSelect() {
 function selectTemplate(id) {
   activeTemplateId = id || null;
   if (activeTemplateId) {
-    const t = templates.find((tt) => tt.id === activeTemplateId);
+    const t = templateList.find((tt) => tt.id === activeTemplateId);
     workingParams = { ...window.Params.emptyParams(), ...(t?.params || {}) };
+    templateNameInput.value = t?.name ?? '';
   } else {
     workingParams = window.Params.emptyParams();
+    templateNameInput.value = '';
   }
   renderTemplateSelect();
   renderEditor();
@@ -135,25 +143,29 @@ function selectTemplate(id) {
 
 async function saveTemplateOverwrite() {
   if (!activeTemplateId) return;
+  const name = templateNameInput.value.trim();
   const updated = await window.templates.update(activeTemplateId, {
+    name: name || undefined,
     params: { ...workingParams },
   });
   if (!updated) return;
   await loadTemplates();
-  renderTemplateSelect();
   setStatus(`テンプレート「${updated.name}」を更新しました`);
 }
 
 async function saveTemplateAsNew() {
-  const name = (window.prompt('テンプレート名を入力してください', '新しいテンプレート') || '').trim();
-  if (!name) return;
+  const name = templateNameInput.value.trim();
+  if (!name) {
+    setStatus('テンプレート名を入力してください', 'warn');
+    templateNameInput.focus();
+    return;
+  }
   const created = await window.templates.create({
     name,
     params: { ...workingParams },
   });
   activeTemplateId = created.id;
   await loadTemplates();
-  renderTemplateSelect();
   setStatus(`テンプレート「${name}」を作成しました`);
 }
 
@@ -173,18 +185,169 @@ function renderEditor() {
 }
 
 // ---------------------------------------------------------------------------
+// Settings modal
+// ---------------------------------------------------------------------------
+
+function openSettings() {
+  renderSettingsTemplateList();
+  if (typeof settingsModal.showModal === 'function') {
+    settingsModal.showModal();
+  } else {
+    settingsModal.setAttribute('open', '');
+  }
+}
+
+function closeSettings() {
+  if (typeof settingsModal.close === 'function') {
+    settingsModal.close();
+  } else {
+    settingsModal.removeAttribute('open');
+  }
+}
+
+/**
+ * Render the template management list inside the settings modal.
+ * Each row supports HTML5 drag-and-drop for reordering and a delete button.
+ */
+function renderSettingsTemplateList() {
+  settingsTemplateList.innerHTML = '';
+
+  if (templateList.length === 0) {
+    const empty = document.createElement('li');
+    empty.classList.add('template-list__empty');
+    empty.textContent = '保存されたテンプレートはありません。右ペインで作成できます。';
+    settingsTemplateList.appendChild(empty);
+    return;
+  }
+
+  for (const t of templateList) {
+    settingsTemplateList.appendChild(buildTemplateListItem(t));
+  }
+}
+
+function buildTemplateListItem(template) {
+  const li = document.createElement('li');
+  li.classList.add('template-list__item');
+  li.draggable = true;
+  li.dataset.id = template.id;
+
+  const handle = document.createElement('span');
+  handle.classList.add('template-list__handle');
+  handle.textContent = '≡';
+  handle.setAttribute('aria-hidden', 'true');
+
+  const name = document.createElement('span');
+  name.classList.add('template-list__name');
+  name.textContent = template.name;
+  name.title = template.name;
+
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.classList.add('template-list__delete', 'btn', 'btn-danger');
+  del.textContent = '削除';
+  del.addEventListener('click', () => deleteTemplateFromSettings(template.id));
+
+  li.appendChild(handle);
+  li.appendChild(name);
+  li.appendChild(del);
+
+  attachDragHandlers(li);
+  return li;
+}
+
+async function deleteTemplateFromSettings(id) {
+  const target = templateList.find((t) => t.id === id);
+  if (!target) return;
+  if (!await window.app.confirm(`テンプレート「${target.name}」を削除しますか？`)) return;
+
+  await window.templates.delete(id);
+
+  // Drop selection if the active template was deleted; the user is then
+  // editing free-form params again.
+  if (activeTemplateId === id) {
+    activeTemplateId = null;
+  }
+
+  await loadTemplates();
+  renderSettingsTemplateList();
+}
+
+// Drag-and-drop reordering ---------------------------------------------------
+
+let dragSourceId = null;
+
+function attachDragHandlers(li) {
+  li.addEventListener('dragstart', (e) => {
+    dragSourceId = li.dataset.id;
+    li.classList.add('template-list__item--dragging');
+    // Required in Firefox to actually start a drag.
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', li.dataset.id);
+    }
+  });
+
+  li.addEventListener('dragend', () => {
+    dragSourceId = null;
+    li.classList.remove('template-list__item--dragging');
+    settingsTemplateList
+      .querySelectorAll('.template-list__item--drop-before, .template-list__item--drop-after')
+      .forEach((el) => {
+        el.classList.remove('template-list__item--drop-before');
+        el.classList.remove('template-list__item--drop-after');
+      });
+  });
+
+  li.addEventListener('dragover', (e) => {
+    if (!dragSourceId || dragSourceId === li.dataset.id) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const rect = li.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    li.classList.toggle('template-list__item--drop-before', before);
+    li.classList.toggle('template-list__item--drop-after', !before);
+  });
+
+  li.addEventListener('dragleave', () => {
+    li.classList.remove('template-list__item--drop-before');
+    li.classList.remove('template-list__item--drop-after');
+  });
+
+  li.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    if (!dragSourceId || dragSourceId === li.dataset.id) return;
+    const rect = li.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    await reorderTemplates(dragSourceId, li.dataset.id, before);
+  });
+}
+
+async function reorderTemplates(sourceId, targetId, insertBefore) {
+  const ids = templateList.map((t) => t.id);
+  const filtered = ids.filter((id) => id !== sourceId);
+  const targetIdx = filtered.indexOf(targetId);
+  if (targetIdx === -1) return;
+  const insertAt = insertBefore ? targetIdx : targetIdx + 1;
+  filtered.splice(insertAt, 0, sourceId);
+
+  await window.templates.reorder(filtered);
+  await loadTemplates();
+  renderSettingsTemplateList();
+}
+
+// ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
 
 async function loadSessions() {
-  sessions = await window.sessions.list();
+  sessionList = await window.sessions.list();
   renderSessionList();
 }
 
 function renderSessionList() {
   sessionListEl.innerHTML = '';
 
-  if (sessions.length === 0) {
+  if (sessionList.length === 0) {
     const hint = document.createElement('p');
     hint.classList.add('hint');
     hint.textContent = '会話を始めると履歴がここに表示されます';
@@ -192,7 +355,7 @@ function renderSessionList() {
     return;
   }
 
-  for (const s of sessions) {
+  for (const s of sessionList) {
     const item = document.createElement('div');
     item.classList.add('session-item');
     if (s.id === activeSessionId) item.classList.add('session-item--active');
@@ -250,7 +413,7 @@ async function loadSession(id) {
 }
 
 async function deleteSession(id) {
-  if (!window.confirm('このセッションを削除しますか？')) return;
+  if (!await window.app.confirm('このセッションを削除しますか？')) return;
   await window.sessions.delete(id);
   if (activeSessionId === id) {
     activeSessionId = null;
@@ -492,6 +655,13 @@ function startNewChat() {
 // ---------------------------------------------------------------------------
 
 newSessionBtn.addEventListener('click', startNewChat);
+
+settingsBtn.addEventListener('click', openSettings);
+settingsCloseBtn.addEventListener('click', closeSettings);
+// Click outside the inner content (the dialog backdrop) closes the modal.
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) closeSettings();
+});
 
 templateSelect.addEventListener('change', () => selectTemplate(templateSelect.value));
 saveTemplateBtn.addEventListener('click', saveTemplateOverwrite);

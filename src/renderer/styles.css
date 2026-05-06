@@ -10,6 +10,11 @@
   padding: 0;
 }
 
+/* Ensure the HTML `hidden` attribute always wins over class-based display rules. */
+[hidden] {
+  display: none !important;
+}
+
 :root {
   --color-bg: #1a1a2e;
   --color-surface: #16213e;
@@ -524,8 +529,47 @@ body {
   border-color: var(--color-primary);
 }
 
-.template-actions .btn {
+.template-actions {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.template-btn-row {
+  display: flex;
+  gap: 8px;
+}
+
+.template-btn-row .btn {
   flex: 1;
+}
+
+.template-name-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.template-name-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+}
+
+.template-name-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.btn--sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  width: auto;
 }
 
 /* ==========================================================================
@@ -615,6 +659,153 @@ body {
 
 .btn-secondary:not(:disabled):hover {
   background: var(--color-secondary-hover);
+}
+
+/* ==========================================================================
+   Settings modal
+   ========================================================================== */
+
+.settings-modal {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  max-width: 560px;
+  width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+}
+
+.settings-modal::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.settings-modal__inner {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+}
+
+.settings-modal__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.settings-modal__title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.settings-section {
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+}
+
+.settings-section__heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.settings-section__hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-bottom: 10px;
+}
+
+/* Template management list */
+
+.template-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.template-list__empty {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: 16px 12px;
+  text-align: center;
+  background: var(--color-surface-raised);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+}
+
+.template-list__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: grab;
+  transition: opacity var(--transition);
+}
+
+.template-list__item:active {
+  cursor: grabbing;
+}
+
+.template-list__item--dragging {
+  opacity: 0.4;
+}
+
+.template-list__item--drop-before {
+  box-shadow: inset 0 2px 0 0 var(--color-primary);
+}
+
+.template-list__item--drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--color-primary);
+}
+
+.template-list__handle {
+  color: var(--color-text-muted);
+  font-size: 16px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.template-list__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.template-list__delete {
+  flex-shrink: 0;
+  width: auto;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.btn-danger {
+  background: var(--color-secondary);
+  color: var(--color-error);
+  border: 1px solid var(--color-border);
+}
+
+.btn-danger:not(:disabled):hover {
+  background: var(--color-error);
+  color: #fff;
+  border-color: var(--color-error);
 }
 
 /* ==========================================================================

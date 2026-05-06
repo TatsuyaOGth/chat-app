@@ -32,7 +32,6 @@
             class="icon-btn"
             title="設定"
             aria-label="設定"
-            disabled
           >
             ⚙
           </button>
@@ -71,11 +70,47 @@
         </div>
 
         <div class="pane-footer template-actions">
-          <button id="save-template-btn" class="btn btn-secondary" disabled>上書き保存</button>
-          <button id="new-template-btn" class="btn btn-secondary">新規テンプレート</button>
+          <input
+            id="template-name-input"
+            class="template-name-input"
+            type="text"
+            placeholder="テンプレート名"
+            maxlength="80"
+            aria-label="テンプレート名"
+          />
+          <div class="template-btn-row">
+            <button id="save-template-btn" type="button" class="btn btn-secondary" disabled>上書き保存</button>
+            <button id="new-template-btn" type="button" class="btn btn-secondary">新規保存</button>
+          </div>
         </div>
       </aside>
     </div>
+
+    <!-- Settings modal -->
+    <dialog id="settings-modal" class="settings-modal" aria-label="設定">
+      <form method="dialog" class="settings-modal__inner">
+        <header class="settings-modal__header">
+          <h2 class="settings-modal__title">⚙ 設定</h2>
+          <button
+            type="button"
+            id="settings-close-btn"
+            class="icon-btn"
+            title="閉じる"
+            aria-label="閉じる"
+          >
+            ×
+          </button>
+        </header>
+
+        <section class="settings-section">
+          <h3 class="settings-section__heading">テンプレート管理</h3>
+          <p class="settings-section__hint">
+            ドラッグ＆ドロップで並べ替えできます。
+          </p>
+          <ul id="settings-template-list" class="template-list" aria-label="テンプレート一覧"></ul>
+        </section>
+      </form>
+    </dialog>
 
     <script src="params.js"></script>
     <script src="renderer.js"></script>

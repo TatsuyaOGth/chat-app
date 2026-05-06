@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const http = require('node:http');
 
@@ -170,6 +170,25 @@ ipcMain.on('ollama:chat', (event, payload) => {
     () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
     (err) => send('ollama:chat:error', { requestId, error: err.message }),
   );
+});
+
+// ---------------------------------------------------------------------------
+// IPC handlers — Native dialogs
+// ---------------------------------------------------------------------------
+
+// `window.prompt()` always returns null in Electron; `window.confirm()` is
+// unreliable in some versions. We replace both with IPC calls.
+
+ipcMain.handle('dialog:confirm', async (event, message) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['キャンセル', 'OK'],
+    defaultId: 1,
+    cancelId: 0,
+    message,
+  });
+  return response === 1;
 });
 
 // ---------------------------------------------------------------------------

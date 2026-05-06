@@ -53,6 +53,11 @@ contextBridge.exposeInMainWorld('ollama', {
   },
 });
 
+contextBridge.exposeInMainWorld('app', {
+  /** Native confirm dialog (replaces window.confirm which is unreliable in Electron). */
+  confirm: (message) => ipcRenderer.invoke('dialog:confirm', message),
+});
+
 contextBridge.exposeInMainWorld('templates', {
   list: () => ipcRenderer.invoke('templates:list'),
   get: (id) => ipcRenderer.invoke('templates:get', id),
