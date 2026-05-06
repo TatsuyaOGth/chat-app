@@ -174,7 +174,7 @@ async function sendMessage() {
     updateSendButton();
   }
 
-  window.ollama.chat(requestId, model, messages);
+  window.ollama.chat(requestId, { model, messages });
 }
 
 // ---------------------------------------------------------------------------
