@@ -176,9 +176,11 @@ async function saveTemplateAsNew() {
 function renderEditor() {
   window.Params.renderParamEditor(paramEditor, workingParams, {
     modelOptions,
-    onChange: (key, value) => {
+    onChange: (key, value, opts = {}) => {
       workingParams = { ...workingParams, [key]: value };
-      renderEditor();
+      if (opts.rerender !== false) {
+        renderEditor();
+      }
       updateSendButton();
     },
   });

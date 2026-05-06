@@ -489,6 +489,45 @@ details[open] > .param-group__heading::before {
   font-family: var(--font-mono);
   color: var(--color-text);
   cursor: help;
+  position: relative;
+}
+
+.param-row__label[data-help]::after {
+  content: attr(data-help);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  max-width: 280px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  word-break: break-word;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    visibility 0s linear 0.5s,
+    opacity 0.12s ease 0.5s,
+    transform 0.12s ease 0.5s;
+}
+
+.param-row__label[data-help]:hover::after,
+.param-row__label[data-help]:focus-visible::after {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0s, 0.5s, 0.5s;
 }
 
 .param-row__reset {

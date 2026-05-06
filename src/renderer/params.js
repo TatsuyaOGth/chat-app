@@ -236,7 +236,11 @@ function renderParamRow(spec, value, ctx) {
   const label = document.createElement('label');
   label.classList.add('param-row__label');
   label.textContent = spec.label;
-  if (spec.help) label.title = spec.help;
+  if (spec.help) {
+    label.dataset.help = spec.help;
+    label.tabIndex = 0;
+    label.setAttribute('aria-description', spec.help);
+  }
 
   const reset = document.createElement('button');
   reset.type = 'button';
@@ -340,18 +344,21 @@ function renderSlider(spec, value, ctx) {
   range.value = display === '' ? String((spec.min + spec.max) / 2) : display;
   number.value = display;
 
-  const commit = (raw) => {
+  const commit = (raw, opts = {}) => {
     if (raw === '' || raw === null || Number.isNaN(Number(raw))) {
-      ctx.onChange(spec.key, null);
+      ctx.onChange(spec.key, null, opts);
       return;
     }
     const n = Number(raw);
     range.value = String(n);
     number.value = String(n);
-    ctx.onChange(spec.key, n);
+    ctx.onChange(spec.key, n, opts);
   };
 
-  range.addEventListener('input', () => commit(range.value));
+  // Keep the native range element alive while dragging so the knob follows
+  // the cursor; only commit a full re-render once dragging ends.
+  range.addEventListener('input', () => commit(range.value, { rerender: false }));
+  range.addEventListener('change', () => commit(range.value));
   number.addEventListener('change', () => commit(number.value));
 
   wrap.appendChild(range);
