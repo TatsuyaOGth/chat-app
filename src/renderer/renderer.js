@@ -4,7 +4,7 @@
 // State
 // ---------------------------------------------------------------------------
 
-/** Full conversation history sent to Ollama on each request. */
+/** Conversation history for the active session, sent to Ollama on each request. */
 let messages = [];
 
 /** Whether the assistant is currently generating a response. */
@@ -29,6 +29,17 @@ let activeTemplateId = null;
  */
 let workingParams = window.Params.emptyParams();
 
+/** All sessions, in storage order (newest first). */
+let sessions = [];
+
+/**
+ * ID of the active session.
+ * `null` means "new chat in progress, not yet persisted" — the session record
+ * is lazily created on the first user message so empty sessions never appear
+ * in the sidebar.
+ */
+let activeSessionId = null;
+
 // ---------------------------------------------------------------------------
 // DOM references
 // ---------------------------------------------------------------------------
@@ -39,6 +50,7 @@ const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 const statusBar = document.getElementById('status-bar');
 const newSessionBtn = document.getElementById('new-session-btn');
+const sessionListEl = document.getElementById('session-list');
 
 const templateSelect = document.getElementById('template-select');
 const paramEditor = document.getElementById('param-editor');
@@ -161,6 +173,120 @@ function renderEditor() {
 }
 
 // ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+async function loadSessions() {
+  sessions = await window.sessions.list();
+  renderSessionList();
+}
+
+function renderSessionList() {
+  sessionListEl.innerHTML = '';
+
+  if (sessions.length === 0) {
+    const hint = document.createElement('p');
+    hint.classList.add('hint');
+    hint.textContent = '会話を始めると履歴がここに表示されます';
+    sessionListEl.appendChild(hint);
+    return;
+  }
+
+  for (const s of sessions) {
+    const item = document.createElement('div');
+    item.classList.add('session-item');
+    if (s.id === activeSessionId) item.classList.add('session-item--active');
+    item.dataset.sessionId = s.id;
+
+    const title = document.createElement('button');
+    title.type = 'button';
+    title.classList.add('session-item__title');
+    title.textContent = s.title || '（無題）';
+    title.title = s.title || '（無題）';
+    title.addEventListener('click', () => loadSession(s.id));
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.classList.add('session-item__delete');
+    del.textContent = '×';
+    del.title = '削除';
+    del.setAttribute('aria-label', `「${s.title || '無題'}」を削除`);
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteSession(s.id);
+    });
+
+    item.appendChild(title);
+    item.appendChild(del);
+    sessionListEl.appendChild(item);
+  }
+}
+
+async function loadSession(id) {
+  if (isGenerating) return;
+  const session = await window.sessions.get(id);
+  if (!session) return;
+
+  activeSessionId = id;
+  messages = (session.messages || []).map((m) => {
+    // Strip any persisted UI-only fields before re-rendering.
+    if (m.role === 'assistant') {
+      return { role: m.role, content: m.content, paramsSnapshot: m.paramsSnapshot };
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  // Re-render messages
+  messagesEl.innerHTML = '';
+  for (const m of messages) {
+    const el = appendMessage(m.role, m.content);
+    if (m.role === 'assistant' && m.paramsSnapshot) {
+      attachParamsSnapshotButton(el, m.paramsSnapshot);
+    }
+  }
+
+  renderSessionList();
+  setStatus('');
+}
+
+async function deleteSession(id) {
+  if (!window.confirm('このセッションを削除しますか？')) return;
+  await window.sessions.delete(id);
+  if (activeSessionId === id) {
+    activeSessionId = null;
+    messages = [];
+    messagesEl.innerHTML = '';
+  }
+  await loadSessions();
+}
+
+/**
+ * The conversation history we send to Ollama uses only `role` and `content`.
+ * `paramsSnapshot` is a UI/audit field and must be stripped first.
+ */
+function messagesForRequest() {
+  return messages.map(({ role, content }) => ({ role, content }));
+}
+
+/** Derive a session title from a user message (first ~30 chars, single line). */
+function deriveTitle(text) {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 30 ? `${oneLine.slice(0, 30)}…` : oneLine;
+}
+
+/** Lazily create the session record on the first user message. */
+async function ensureSession(firstUserText) {
+  if (activeSessionId) return activeSessionId;
+  const session = await window.sessions.create({
+    templateId: activeTemplateId,
+    title: deriveTitle(firstUserText),
+  });
+  activeSessionId = session.id;
+  await loadSessions();
+  return session.id;
+}
+
+// ---------------------------------------------------------------------------
 // Chat rendering
 // ---------------------------------------------------------------------------
 
@@ -180,7 +306,73 @@ function appendMessage(role, initialText) {
   wrapper.appendChild(content);
   messagesEl.appendChild(wrapper);
   scrollToBottom();
-  return content;
+  return wrapper; // return the whole wrapper so callers can attach extras
+}
+
+/**
+ * Attach a small "ⓘ" button to an assistant message wrapper that, when
+ * clicked, toggles a popover showing which params were used to generate it.
+ */
+function attachParamsSnapshotButton(wrapper, snapshot) {
+  // Avoid duplicate buttons if called twice.
+  if (wrapper.querySelector('.message__settings-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.classList.add('message__settings-btn');
+  btn.textContent = 'ⓘ';
+  btn.title = 'この応答に使用した設定';
+  btn.setAttribute('aria-label', 'この応答に使用した設定を表示');
+
+  const popover = document.createElement('div');
+  popover.classList.add('params-popover');
+  popover.hidden = true;
+  popover.appendChild(buildSnapshotTable(snapshot));
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    popover.hidden = !popover.hidden;
+  });
+
+  // Click outside closes it.
+  document.addEventListener('click', (e) => {
+    if (!popover.contains(e.target) && e.target !== btn) {
+      popover.hidden = true;
+    }
+  });
+
+  wrapper.appendChild(btn);
+  wrapper.appendChild(popover);
+}
+
+function buildSnapshotTable(snapshot) {
+  const table = document.createElement('table');
+  table.classList.add('params-popover__table');
+
+  const customized = Object.entries(snapshot).filter(([, v]) => window.Params.isCustomized(v));
+  if (customized.length === 0) {
+    const p = document.createElement('p');
+    p.classList.add('params-popover__empty');
+    p.textContent = '（すべて Ollama デフォルト）';
+    return p;
+  }
+
+  for (const [key, value] of customized) {
+    const tr = document.createElement('tr');
+
+    const th = document.createElement('th');
+    th.textContent = key;
+
+    const td = document.createElement('td');
+    const display = typeof value === 'string' ? value : JSON.stringify(value);
+    td.textContent = display.length > 80 ? `${display.slice(0, 80)}…` : display;
+    td.title = display;
+
+    tr.appendChild(th);
+    tr.appendChild(td);
+    table.appendChild(tr);
+  }
+  return table;
 }
 
 function scrollToBottom() {
@@ -207,12 +399,23 @@ async function sendMessage() {
     return;
   }
 
-  messages.push({ role: 'user', content: text });
+  // Snapshot the params at the moment generation starts, so edits made during
+  // the response don't leak into this assistant turn's audit trail.
+  const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
+
+  // Render user message + persist
+  const userMsg = { role: 'user', content: text };
+  messages.push(userMsg);
   appendMessage('user', text);
   messageInput.value = '';
   updateSendButton();
 
-  const assistantContent = appendMessage('assistant', '');
+  const sessionId = await ensureSession(text);
+  await window.sessions.appendMessage(sessionId, userMsg);
+
+  // Prepare assistant bubble
+  const assistantWrapper = appendMessage('assistant', '');
+  const assistantContent = assistantWrapper.querySelector('.message__content');
   isGenerating = true;
   sendBtn.disabled = true;
   setStatus('生成中…');
@@ -242,18 +445,32 @@ async function sendMessage() {
     finish();
   });
 
-  function finish() {
+  async function finish() {
     unsubChunk();
     unsubError();
     isGenerating = false;
     if (done && responseText) {
-      messages.push({ role: 'assistant', content: responseText });
+      const assistantMsg = {
+        role: 'assistant',
+        content: responseText,
+        paramsSnapshot,
+      };
+      messages.push(assistantMsg);
+      attachParamsSnapshotButton(assistantWrapper, paramsSnapshot);
+      await window.sessions.appendMessage(sessionId, assistantMsg);
+      // Refresh the session list so updatedAt-driven order changes if any.
+      await loadSessions();
       setStatus('');
     }
     updateSendButton();
   }
 
-  window.ollama.chat(requestId, { model, messages, system, options });
+  window.ollama.chat(requestId, {
+    model,
+    messages: messagesForRequest(),
+    system,
+    options,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -261,9 +478,12 @@ async function sendMessage() {
 // ---------------------------------------------------------------------------
 
 function startNewChat() {
+  if (isGenerating) return;
+  activeSessionId = null;
   messages = [];
   messagesEl.innerHTML = '';
   setStatus('');
+  renderSessionList();
   messageInput.focus();
 }
 
@@ -297,6 +517,6 @@ inputForm.addEventListener('submit', (e) => {
 
 (async function init() {
   renderEditor();
-  await Promise.all([loadModels(), loadTemplates()]);
+  await Promise.all([loadModels(), loadTemplates(), loadSessions()]);
   messageInput.focus();
 })();
