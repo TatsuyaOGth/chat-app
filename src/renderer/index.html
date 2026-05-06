@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -12,46 +12,107 @@
   </head>
   <body>
     <div id="app">
-      <!-- Sidebar -->
-      <aside id="sidebar">
-        <div class="sidebar-header">
+      <!-- Left pane: session list (Phase 3 will populate it) + settings button -->
+      <aside id="left-pane">
+        <div class="pane-header">
           <h1 class="app-title">Chat App</h1>
         </div>
 
-        <div class="model-section">
-          <label for="model-select" class="label">Model</label>
-          <div class="model-row">
-            <select id="model-select" class="select"></select>
-            <button id="refresh-models-btn" class="icon-btn" title="Refresh models" aria-label="Refresh models">
-              &#x21bb;
-            </button>
-          </div>
+        <div class="pane-actions">
+          <button id="new-session-btn" class="btn btn-secondary">＋ 新規セッション</button>
         </div>
 
-        <div class="sidebar-actions">
-          <button id="new-chat-btn" class="btn btn-secondary">New chat</button>
+        <div id="session-list" class="session-list" aria-label="セッション一覧">
+          <!-- Populated by renderer.js -->
         </div>
 
-        <div id="status-bar" class="status-bar" aria-live="polite"></div>
+        <div class="pane-footer">
+          <button
+            id="settings-btn"
+            class="icon-btn"
+            title="設定"
+            aria-label="設定"
+          >
+            ⚙
+          </button>
+        </div>
       </aside>
 
-      <!-- Main chat area -->
-      <main id="main">
-        <div id="messages" role="log" aria-label="Chat messages" aria-live="polite"></div>
+      <!-- Center pane: chat area -->
+      <main id="center-pane">
+        <div id="messages" role="log" aria-label="チャットメッセージ" aria-live="polite"></div>
 
         <form id="input-form" class="input-form" autocomplete="off">
           <textarea
             id="message-input"
             class="message-input"
-            placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
+            placeholder="メッセージを入力… (Enter で送信、Shift+Enter で改行)"
             rows="3"
-            aria-label="Message input"
+            aria-label="メッセージ入力"
           ></textarea>
-          <button id="send-btn" type="submit" class="btn btn-primary" disabled>Send</button>
+          <button id="send-btn" type="submit" class="btn btn-primary" disabled>送信</button>
         </form>
+
+        <div id="status-bar" class="status-bar" aria-live="polite"></div>
       </main>
+
+      <!-- Right pane: template selector + parameter editor -->
+      <aside id="right-pane">
+        <div class="pane-header">
+          <label for="template-select" class="label">テンプレート</label>
+          <select id="template-select" class="select">
+            <option value="">（新規 / 未保存）</option>
+          </select>
+        </div>
+
+        <div id="param-editor" class="param-editor" aria-label="パラメータ編集">
+          <!-- Parameter rows are rendered by params.js -->
+        </div>
+
+        <div class="pane-footer template-actions">
+          <input
+            id="template-name-input"
+            class="template-name-input"
+            type="text"
+            placeholder="テンプレート名"
+            maxlength="80"
+            aria-label="テンプレート名"
+          />
+          <div class="template-btn-row">
+            <button id="save-template-btn" type="button" class="btn btn-secondary" disabled>上書き保存</button>
+            <button id="new-template-btn" type="button" class="btn btn-secondary">新規保存</button>
+          </div>
+        </div>
+      </aside>
     </div>
 
+    <!-- Settings modal -->
+    <dialog id="settings-modal" class="settings-modal" aria-label="設定">
+      <form method="dialog" class="settings-modal__inner">
+        <header class="settings-modal__header">
+          <h2 class="settings-modal__title">⚙ 設定</h2>
+          <button
+            type="button"
+            id="settings-close-btn"
+            class="icon-btn"
+            title="閉じる"
+            aria-label="閉じる"
+          >
+            ×
+          </button>
+        </header>
+
+        <section class="settings-section">
+          <h3 class="settings-section__heading">テンプレート管理</h3>
+          <p class="settings-section__hint">
+            ドラッグ＆ドロップで並べ替えできます。
+          </p>
+          <ul id="settings-template-list" class="template-list" aria-label="テンプレート一覧"></ul>
+        </section>
+      </form>
+    </dialog>
+
+    <script src="params.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>
