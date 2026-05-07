@@ -12,6 +12,12 @@ const storage = require('./storage');
 const OLLAMA_HOST = 'localhost';
 const OLLAMA_PORT = 11434;
 
+/** ms of silence before an in-flight stream is declared timed-out. */
+const INACTIVITY_TIMEOUT_MS = 30_000;
+
+/** Map<requestId, abortFn> — lets the cancel IPC handler kill a live request. */
+const activeRequests = new Map();
+
 /** Low-level helper: issue an HTTP request to the local Ollama server. */
 function ollamaRequest(method, pathname, body) {
   return new Promise((resolve, reject) => {
@@ -74,9 +80,9 @@ function buildChatBody({ model, messages, system, options }) {
 /**
  * Stream a chat request to Ollama.
  * Calls `onChunk(content)` for each token and `onDone()` when finished.
- * Returns a function that aborts the request when called.
+ * `requestId` is used to register an abort handle in `activeRequests`.
  */
-function ollamaChatStream({ model, messages, system, options }, onChunk, onDone, onError) {
+function ollamaChatStream({ requestId, model, messages, system, options }, onChunk, onDone, onError) {
   const payload = JSON.stringify(buildChatBody({ model, messages, system, options }));
   const reqOptions = {
     hostname: OLLAMA_HOST,
@@ -89,50 +95,122 @@ function ollamaChatStream({ model, messages, system, options }, onChunk, onDone,
     },
   };
 
+  let finished = false;
+  let inactivityTimer = null;
+
+  function resetInactivityTimer() {
+    clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        cleanup();
+        req.destroy();
+        onError(new Error('応答タイムアウト: サーバーからの応答が途絶えました'));
+      }
+    }, INACTIVITY_TIMEOUT_MS);
+  }
+
+  function cleanup() {
+    clearTimeout(inactivityTimer);
+    activeRequests.delete(requestId);
+  }
+
   const req = http.request(reqOptions, (res) => {
+    // Non-200 → read body text then report as error; never call onDone.
+    if (res.statusCode !== 200) {
+      let errBody = '';
+      res.on('data', (c) => { errBody += c.toString('utf8'); });
+      res.on('end', () => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        let detail;
+        try {
+          const parsed = JSON.parse(errBody);
+          detail = parsed.error || parsed.message || errBody;
+        } catch {
+          detail = errBody || `HTTP ${res.statusCode}`;
+        }
+        onError(new Error(`HTTP ${res.statusCode}: ${detail}`));
+      });
+      return;
+    }
+
+    resetInactivityTimer();
     let buffer = '';
+    let parseFailCount = 0;
 
     res.on('data', (chunk) => {
+      resetInactivityTimer();
       buffer += chunk.toString('utf8');
       const lines = buffer.split('\n');
-      // Keep the last (possibly incomplete) line in the buffer
       buffer = lines.pop();
 
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line);
-          if (parsed.message?.content) {
-            onChunk(parsed.message.content);
-          }
-          if (parsed.done) {
+          if (parsed.message?.content) onChunk(parsed.message.content);
+          if (parsed.done && !finished) {
+            finished = true;
+            cleanup();
             onDone();
           }
         } catch {
-          // Ignore unparseable lines
+          parseFailCount++;
+          if (parseFailCount <= 3 || parseFailCount % 20 === 0) {
+            console.warn(`[ollama:${requestId}] JSON parse failed (×${parseFailCount}):`, line.slice(0, 200));
+          }
         }
       }
     });
 
     res.on('end', () => {
-      // Flush any remaining buffer
+      // Flush remaining buffer
       if (buffer.trim()) {
         try {
           const parsed = JSON.parse(buffer);
-          if (parsed.message?.content) onChunk(parsed.message.content);
-          if (parsed.done) onDone();
+          if (parsed.message?.content && !finished) onChunk(parsed.message.content);
+          if (parsed.done && !finished) {
+            finished = true;
+            cleanup();
+            onDone();
+            return;
+          }
         } catch {
-          // Ignore
+          console.warn(`[ollama:${requestId}] JSON parse failed on final buffer:`, buffer.slice(0, 200));
         }
+      }
+      // Stream closed without done:true → treat as normal completion.
+      if (!finished) {
+        finished = true;
+        cleanup();
+        onDone();
       }
     });
   });
 
-  req.on('error', onError);
+  req.on('error', (err) => {
+    if (!finished) {
+      finished = true;
+      cleanup();
+      onError(err);
+    }
+  });
+
   req.write(payload);
   req.end();
 
-  return () => req.destroy();
+  // Register abort handle; returns true if the request was actually cancelled.
+  activeRequests.set(requestId, () => {
+    if (!finished) {
+      finished = true;
+      cleanup();
+      req.destroy();
+      return true;
+    }
+    return false;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -165,11 +243,20 @@ ipcMain.on('ollama:chat', (event, payload) => {
   const { requestId, model, messages, system, options } = payload;
 
   ollamaChatStream(
-    { model, messages, system, options },
+    { requestId, model, messages, system, options },
     (content) => send('ollama:chat:chunk', { requestId, content, done: false }),
     () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
-    (err) => send('ollama:chat:error', { requestId, error: err.message }),
+    (err) => send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' }),
   );
+});
+
+ipcMain.on('ollama:chat:cancel', (event, { requestId }) => {
+  const abort = activeRequests.get(requestId);
+  if (abort && abort()) {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('ollama:chat:error', { requestId, error: 'キャンセルされました', cancelled: true });
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

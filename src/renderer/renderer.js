@@ -13,6 +13,9 @@ let isGenerating = false;
 /** Monotonically increasing request counter used as request ID. */
 let requestCounter = 0;
 
+/** requestId of the currently in-flight generation, or null when idle. */
+let currentRequestId = null;
+
 /** Cached list of available Ollama model names (used by the model dropdown). */
 let modelOptions = [];
 
@@ -48,6 +51,7 @@ const messagesEl = document.getElementById('messages');
 const inputForm = document.getElementById('input-form');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
+const cancelBtn = document.getElementById('cancel-btn');
 const statusBar = document.getElementById('status-bar');
 const newSessionBtn = document.getElementById('new-session-btn');
 const sessionListEl = document.getElementById('session-list');
@@ -277,6 +281,7 @@ async function saveTemplateAsNew() {
 function renderEditor() {
   window.Params.renderParamEditor(paramEditor, workingParams, {
     modelOptions,
+    onReloadModels: loadModels,
     onChange: (key, value, opts = {}) => {
       workingParams = { ...workingParams, [key]: value };
       if (opts.rerender !== false) {
@@ -669,26 +674,39 @@ async function sendMessage() {
   // the response don't leak into this assistant turn's audit trail.
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
 
-  // Render user message + persist
+  // Render user message
   const userMsg = { role: 'user', content: text };
   messages.push(userMsg);
   appendMessage('user', text);
   messageInput.value = '';
   updateSendButton();
 
-  const sessionId = await ensureSession(text);
-  await window.sessions.appendMessage(sessionId, userMsg);
+  // Persist user message; roll back display on failure.
+  let sessionId;
+  try {
+    sessionId = await ensureSession(text);
+    await window.sessions.appendMessage(sessionId, userMsg);
+  } catch (err) {
+    messages.pop();
+    messageInput.value = text;
+    setStatus(`セッション保存エラー: ${err.message}`, 'error');
+    updateSendButton();
+    return;
+  }
 
   // Prepare assistant bubble
   const assistantWrapper = appendMessage('assistant', '');
   const assistantContent = assistantWrapper.querySelector('.message__content');
   isGenerating = true;
   sendBtn.disabled = true;
+  cancelBtn.style.display = '';
   setStatus('生成中…');
 
   const requestId = String(++requestCounter);
+  currentRequestId = requestId;
   let responseText = '';
   let done = false;
+  let finishCalled = false;
 
   const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
     if (rid !== requestId) return;
@@ -703,18 +721,32 @@ async function sendMessage() {
     }
   });
 
-  const unsubError = window.ollama.onChatError(({ requestId: rid, error }) => {
+  const unsubError = window.ollama.onChatError(({ requestId: rid, error, cancelled }) => {
     if (rid !== requestId) return;
-    assistantContent.textContent = `[エラー: ${error}]`;
-    assistantContent.classList.add('message__content--error');
-    setStatus(`エラー: ${error}`, 'error');
+    if (cancelled) {
+      // Voluntary cancel: keep any partial text; update status only.
+      if (!responseText) {
+        assistantContent.textContent = '[キャンセル]';
+        assistantContent.classList.add('message__content--error');
+      }
+      setStatus('生成をキャンセルしました', 'warn');
+    } else {
+      assistantContent.textContent = `[エラー: ${error}]`;
+      assistantContent.classList.add('message__content--error');
+      setStatus(`エラー: ${error}`, 'error');
+    }
     finish();
   });
 
   async function finish() {
+    if (finishCalled) return;
+    finishCalled = true;
     unsubChunk();
     unsubError();
     isGenerating = false;
+    currentRequestId = null;
+    cancelBtn.style.display = 'none';
+
     if (done && responseText) {
       const assistantMsg = {
         role: 'assistant',
@@ -723,10 +755,13 @@ async function sendMessage() {
       };
       messages.push(assistantMsg);
       attachParamsSnapshotButton(assistantWrapper, paramsSnapshot);
-      await window.sessions.appendMessage(sessionId, assistantMsg);
-      // Refresh the session list so updatedAt-driven order changes if any.
-      await loadSessions();
-      setStatus('');
+      try {
+        await window.sessions.appendMessage(sessionId, assistantMsg);
+        await loadSessions();
+        setStatus('');
+      } catch {
+        setStatus('応答の保存に失敗しました（表示は正常です）', 'warn');
+      }
     }
     updateSendButton();
   }
@@ -769,6 +804,12 @@ settingsModal.addEventListener('click', (e) => {
 templateSelect.addEventListener('change', () => selectTemplate(templateSelect.value));
 saveTemplateBtn.addEventListener('click', saveTemplateOverwrite);
 newTemplateBtn.addEventListener('click', saveTemplateAsNew);
+
+cancelBtn.addEventListener('click', () => {
+  if (currentRequestId !== null) {
+    window.ollama.cancel(currentRequestId);
+  }
+});
 
 messageInput.addEventListener('input', updateSendButton);
 

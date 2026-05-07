@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('ollama', {
     ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options }),
 
   /**
+   * Cancel an in-progress streaming request by its requestId.
+   * The renderer will receive an `onChatError` callback with `cancelled: true`.
+   */
+  cancel: (requestId) => ipcRenderer.send('ollama:chat:cancel', { requestId }),
+
+  /**
    * Register a listener for streaming response chunks.
    * The callback receives `{ requestId, content, done }`.
    * @returns {function} Unsubscribe function.

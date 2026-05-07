@@ -531,6 +531,13 @@ body {
   color: var(--color-text-muted);
 }
 
+#cancel-btn {
+  width: auto;
+  flex-shrink: 0;
+  align-self: flex-end;
+  padding: 10px 20px;
+}
+
 .status-bar {
   font-size: 11px;
   color: var(--color-text-muted);
@@ -715,6 +722,39 @@ details[open] > .param-group__heading::before {
 .param-row__reset:hover {
   background: var(--color-secondary-hover);
   color: var(--color-text);
+}
+
+.param-row__reload {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  display: inline-flex;
+  align-items: center;
+}
+
+.param-row__reload:hover:not(:disabled) {
+  background: var(--color-secondary-hover);
+  color: var(--color-text);
+}
+
+.param-row__reload:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.param-row__reload--spinning {
+  animation: param-reload-spin 0.7s linear infinite;
+}
+
+@keyframes param-reload-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 .param-row__control {
