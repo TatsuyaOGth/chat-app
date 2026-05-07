@@ -63,6 +63,107 @@ const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
 const settingsTemplateList = document.getElementById('settings-template-list');
 
+// ─────────────────────────────────────────────────────────────────
+// Markdown Configuration & Rendering
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Configure marked.js with GFM (GitHub Flavored Markdown) and highlight.js integration
+ */
+function configureMarked() {
+  if (typeof marked === 'undefined' || typeof hljs === 'undefined') {
+    console.warn('marked or highlight.js not loaded');
+    return;
+  }
+
+  marked.setOptions({
+    gfm: true,              // GitHub Flavored Markdown (テーブル、タスクリスト対応)
+    breaks: false,          // 単一改行を <br> にしない（マークダウン標準に従う）
+    highlight: function(code, lang) {
+      // 50000文字以上のコードはハイライトをスキップ（パフォーマンス対策）
+      if (code.length > 50000) {
+        return code;
+      }
+
+      // 言語が指定されている場合
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          return hljs.highlight(code, { language: lang }).value;
+        } catch (err) {
+          console.error('Highlight error:', err);
+        }
+      }
+
+      // 自動言語検出
+      try {
+        return hljs.highlightAuto(code).value;
+      } catch (err) {
+        console.error('Auto-highlight error:', err);
+        return code;
+      }
+    }
+  });
+}
+
+/**
+ * Render markdown text to sanitized HTML
+ * @param {string} text - Markdown text
+ * @returns {string} Sanitized HTML
+ */
+function renderMarkdown(text) {
+  if (!text) return '';
+
+  // XSS 対策: DOMPurify が利用可能か確認
+  if (typeof DOMPurify === 'undefined') {
+    console.error('DOMPurify not loaded - falling back to escaped text');
+    return escapeHtml(text);
+  }
+
+  // マークダウンを HTML に変換
+  let html;
+  try {
+    html = marked.parse(text);
+  } catch (err) {
+    console.error('Markdown parse error:', err);
+    return escapeHtml(text);
+  }
+
+  // XSS 対策: HTML をサニタイズ
+  const clean = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'p', 'br', 'hr',
+      'strong', 'em', 'code', 'pre',
+      'a', 'img',
+      'ul', 'ol', 'li',
+      'blockquote',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td',
+      'span', 'div'
+    ],
+    ALLOWED_ATTR: [
+      'href', 'title', 'alt', 'src',
+      'class', 'id',
+      'start', 'type'  // ol の start 属性、type 属性
+    ],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select', 'button'],
+    FORBID_ATTR: ['onclick', 'onerror', 'onload', 'onmouseover', 'onfocus', 'onblur', 'style'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|ftp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i  // javascript:, data: を除外
+  });
+
+  return clean;
+}
+
+/**
+ * Escape HTML special characters (fallback for when DOMPurify is unavailable)
+ * @param {string} text
+ * @returns {string}
+ */
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 // ---------------------------------------------------------------------------
 // Status bar
 // ---------------------------------------------------------------------------
@@ -465,7 +566,7 @@ function appendMessage(role, initialText) {
 
   const content = document.createElement('div');
   content.classList.add('message__content');
-  content.textContent = initialText;
+  content.innerHTML = renderMarkdown(initialText);
 
   wrapper.appendChild(labelEl);
   wrapper.appendChild(content);
@@ -593,7 +694,7 @@ async function sendMessage() {
     if (rid !== requestId) return;
     if (content) {
       responseText += content;
-      assistantContent.textContent = responseText;
+      assistantContent.innerHTML = renderMarkdown(responseText);
       scrollToBottom();
     }
     if (isDone) {
@@ -688,6 +789,9 @@ inputForm.addEventListener('submit', (e) => {
 // ---------------------------------------------------------------------------
 
 (async function init() {
+  // Initialize markdown rendering
+  configureMarked();
+
   renderEditor();
   await Promise.all([loadModels(), loadTemplates(), loadSessions()]);
   messageInput.focus();
