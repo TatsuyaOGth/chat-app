@@ -511,8 +511,8 @@ async function loadSession(id) {
   messagesEl.innerHTML = '';
   for (const m of messages) {
     const el = appendMessage(m.role, m.content);
-    if (m.role === 'assistant' && m.paramsSnapshot) {
-      attachParamsSnapshotButton(el, m.paramsSnapshot);
+    if (m.role === 'assistant') {
+      attachAssistantButtons(el, m.paramsSnapshot || null);
     }
   }
 
@@ -571,6 +571,7 @@ function appendMessage(role, initialText) {
 
   const content = document.createElement('div');
   content.classList.add('message__content');
+  content.dataset.raw = initialText;
   content.innerHTML = renderMarkdown(initialText);
 
   wrapper.appendChild(labelEl);
@@ -580,28 +581,52 @@ function appendMessage(role, initialText) {
 }
 
 /**
- * Attach a small "ⓘ" button to an assistant message wrapper that shows
- * a popover with which params were used, on hover.
+ * Attach a copy button and optional "ⓘ" params button to an assistant message.
+ * The popover hover is scoped to the info wrapper only, so the copy button
+ * does not accidentally trigger it.
  */
-function attachParamsSnapshotButton(wrapper, snapshot) {
+function attachAssistantButtons(wrapper, snapshot) {
   if (wrapper.querySelector('.message__settings-container')) return;
 
   const container = document.createElement('div');
   container.classList.add('message__settings-container');
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.classList.add('message__settings-btn');
-  btn.textContent = 'ⓘ';
-  btn.title = 'この応答に使用した設定';
-  btn.setAttribute('aria-label', 'この応答に使用した設定を表示');
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.classList.add('message__copy-btn');
+  copyBtn.textContent = '⧉';
+  copyBtn.title = '応答をコピー';
+  copyBtn.setAttribute('aria-label', '応答をコピー');
+  copyBtn.addEventListener('click', () => {
+    const contentEl = wrapper.querySelector('.message__content');
+    const text = contentEl.dataset.raw || contentEl.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      copyBtn.textContent = '✓';
+      setTimeout(() => { copyBtn.textContent = '⧉'; }, 1500);
+    });
+  });
+  container.appendChild(copyBtn);
 
-  const popover = document.createElement('div');
-  popover.classList.add('params-popover');
-  popover.appendChild(buildSnapshotTable(snapshot));
+  if (snapshot) {
+    const infoWrapper = document.createElement('div');
+    infoWrapper.classList.add('message__info-wrapper');
 
-  container.appendChild(btn);
-  container.appendChild(popover);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.classList.add('message__settings-btn');
+    btn.textContent = 'ⓘ';
+    btn.title = 'この応答に使用した設定';
+    btn.setAttribute('aria-label', 'この応答に使用した設定を表示');
+
+    const popover = document.createElement('div');
+    popover.classList.add('params-popover');
+    popover.appendChild(buildSnapshotTable(snapshot));
+
+    infoWrapper.appendChild(btn);
+    infoWrapper.appendChild(popover);
+    container.appendChild(infoWrapper);
+  }
+
   wrapper.appendChild(container);
 }
 
@@ -701,6 +726,7 @@ async function sendMessage() {
     if (rid !== requestId) return;
     if (content) {
       responseText += content;
+      assistantContent.dataset.raw = responseText;
       assistantContent.innerHTML = renderMarkdown(responseText);
     }
     if (isDone) {
@@ -742,7 +768,7 @@ async function sendMessage() {
         paramsSnapshot,
       };
       messages.push(assistantMsg);
-      attachParamsSnapshotButton(assistantWrapper, paramsSnapshot);
+      attachAssistantButtons(assistantWrapper, paramsSnapshot);
       try {
         await window.sessions.appendMessage(sessionId, assistantMsg);
         await loadSessions();

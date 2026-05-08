@@ -456,11 +456,18 @@ body {
 }
 
 .message__settings-container {
-  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   align-self: flex-start;
 }
 
-.message__settings-btn {
+.message__info-wrapper {
+  position: relative;
+}
+
+.message__settings-btn,
+.message__copy-btn {
   background: transparent;
   border: none;
   color: var(--color-text-muted);
@@ -472,7 +479,8 @@ body {
   transition: color var(--transition), background var(--transition);
 }
 
-.message__settings-btn:hover {
+.message__settings-btn:hover,
+.message__copy-btn:hover {
   color: var(--color-primary);
   background: var(--color-secondary);
 }
@@ -502,7 +510,7 @@ body {
     transform 0.15s ease 0.1s;
 }
 
-.message__settings-container:hover .params-popover {
+.message__info-wrapper:hover .params-popover {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
