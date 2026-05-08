@@ -576,7 +576,6 @@ function appendMessage(role, initialText) {
   wrapper.appendChild(labelEl);
   wrapper.appendChild(content);
   messagesEl.appendChild(wrapper);
-  scrollToBottom();
   return wrapper; // return the whole wrapper so callers can attach extras
 }
 
@@ -646,9 +645,6 @@ function buildSnapshotTable(snapshot) {
   return table;
 }
 
-function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
 
 // ---------------------------------------------------------------------------
 // Send / receive
@@ -677,7 +673,10 @@ async function sendMessage() {
   // Render user message
   const userMsg = { role: 'user', content: text };
   messages.push(userMsg);
-  appendMessage('user', text);
+  const userMsgEl = appendMessage('user', text);
+  const elRect = userMsgEl.getBoundingClientRect();
+  const containerRect = messagesEl.getBoundingClientRect();
+  messagesEl.scrollTo({ top: messagesEl.scrollTop + elRect.top - containerRect.top, behavior: 'smooth' });
   messageInput.value = '';
   updateSendButton();
 
@@ -713,7 +712,6 @@ async function sendMessage() {
     if (content) {
       responseText += content;
       assistantContent.innerHTML = renderMarkdown(responseText);
-      scrollToBottom();
     }
     if (isDone) {
       done = true;
