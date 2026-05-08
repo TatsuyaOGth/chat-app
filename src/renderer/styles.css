@@ -435,6 +435,11 @@ body {
   position: relative;
 }
 
+.message__settings-container {
+  position: relative;
+  align-self: flex-start;
+}
+
 .message__settings-btn {
   background: transparent;
   border: none;
@@ -442,10 +447,8 @@ body {
   font-size: 13px;
   line-height: 1;
   padding: 2px 6px;
-  margin-top: 2px;
   cursor: pointer;
   border-radius: 4px;
-  align-self: flex-start;
   transition: color var(--transition), background var(--transition);
 }
 
@@ -469,10 +472,22 @@ body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   font-size: 12px;
   font-family: var(--font-mono);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    visibility 0s linear 0.1s,
+    opacity 0.15s ease 0.1s,
+    transform 0.15s ease 0.1s;
 }
 
-.params-popover[hidden] {
-  display: none;
+.message__settings-container:hover .params-popover {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition-delay: 0s, 0.3s, 0.3s;
 }
 
 .params-popover__table {

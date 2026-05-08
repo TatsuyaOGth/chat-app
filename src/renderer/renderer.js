@@ -580,12 +580,14 @@ function appendMessage(role, initialText) {
 }
 
 /**
- * Attach a small "ⓘ" button to an assistant message wrapper that, when
- * clicked, toggles a popover showing which params were used to generate it.
+ * Attach a small "ⓘ" button to an assistant message wrapper that shows
+ * a popover with which params were used, on hover.
  */
 function attachParamsSnapshotButton(wrapper, snapshot) {
-  // Avoid duplicate buttons if called twice.
-  if (wrapper.querySelector('.message__settings-btn')) return;
+  if (wrapper.querySelector('.message__settings-container')) return;
+
+  const container = document.createElement('div');
+  container.classList.add('message__settings-container');
 
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -596,23 +598,11 @@ function attachParamsSnapshotButton(wrapper, snapshot) {
 
   const popover = document.createElement('div');
   popover.classList.add('params-popover');
-  popover.hidden = true;
   popover.appendChild(buildSnapshotTable(snapshot));
 
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    popover.hidden = !popover.hidden;
-  });
-
-  // Click outside closes it.
-  document.addEventListener('click', (e) => {
-    if (!popover.contains(e.target) && e.target !== btn) {
-      popover.hidden = true;
-    }
-  });
-
-  wrapper.appendChild(btn);
-  wrapper.appendChild(popover);
+  container.appendChild(btn);
+  container.appendChild(popover);
+  wrapper.appendChild(container);
 }
 
 function buildSnapshotTable(snapshot) {
