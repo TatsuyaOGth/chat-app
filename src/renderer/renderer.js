@@ -67,6 +67,12 @@ const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
 const settingsTemplateList = document.getElementById('settings-template-list');
 
+const appEl = document.getElementById('app');
+const leftPaneEl = document.getElementById('left-pane');
+const rightPaneEl = document.getElementById('right-pane');
+const leftPaneToggle = document.getElementById('left-pane-toggle');
+const rightPaneToggle = document.getElementById('right-pane-toggle');
+
 // ─────────────────────────────────────────────────────────────────
 // Markdown Configuration & Rendering
 // ─────────────────────────────────────────────────────────────────
@@ -803,10 +809,42 @@ function startNewChat() {
 }
 
 // ---------------------------------------------------------------------------
+// Pane collapse
+// ---------------------------------------------------------------------------
+
+const PANE_STATE_KEY = 'paneCollapsed';
+
+function applyPaneState(state) {
+  const leftCollapsed = !!state.left;
+  const rightCollapsed = !!state.right;
+  appEl.classList.toggle('left-collapsed', leftCollapsed);
+  appEl.classList.toggle('right-collapsed', rightCollapsed);
+  leftPaneEl.classList.toggle('collapsed', leftCollapsed);
+  rightPaneEl.classList.toggle('collapsed', rightCollapsed);
+  leftPaneToggle.textContent = leftCollapsed ? '▶' : '◀';
+  leftPaneToggle.setAttribute('aria-label', leftCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+  leftPaneToggle.setAttribute('title', leftCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+  rightPaneToggle.textContent = rightCollapsed ? '◀' : '▶';
+  rightPaneToggle.setAttribute('aria-label', rightCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+  rightPaneToggle.setAttribute('title', rightCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+}
+
+function togglePane(side) {
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem(PANE_STATE_KEY) || '{}'); } catch (_) {}
+  state[side] = !state[side];
+  try { localStorage.setItem(PANE_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+  applyPaneState(state);
+}
+
+// ---------------------------------------------------------------------------
 // Event listeners
 // ---------------------------------------------------------------------------
 
 newSessionBtn.addEventListener('click', startNewChat);
+
+leftPaneToggle.addEventListener('click', () => togglePane('left'));
+rightPaneToggle.addEventListener('click', () => togglePane('right'));
 
 settingsBtn.addEventListener('click', openSettings);
 settingsCloseBtn.addEventListener('click', closeSettings);
@@ -846,6 +884,11 @@ inputForm.addEventListener('submit', (e) => {
 (async function init() {
   // Initialize markdown rendering
   configureMarked();
+
+  // Restore pane collapse state
+  let paneState = {};
+  try { paneState = JSON.parse(localStorage.getItem(PANE_STATE_KEY) || '{}'); } catch (_) {}
+  applyPaneState(paneState);
 
   renderEditor();
   await Promise.all([loadModels(), loadTemplates(), loadSessions()]);

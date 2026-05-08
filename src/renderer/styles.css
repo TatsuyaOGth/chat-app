@@ -35,6 +35,7 @@
   --font-mono: "Cascadia Code", "Fira Code", "Consolas", monospace;
   --left-pane-width: 220px;
   --right-pane-width: 320px;
+  --pane-collapsed-width: 36px;
   --transition: 0.15s ease;
 }
 
@@ -57,6 +58,19 @@ body {
   grid-template-columns: var(--left-pane-width) 1fr var(--right-pane-width);
   height: 100vh;
   overflow: hidden;
+  transition: grid-template-columns var(--transition);
+}
+
+#app.left-collapsed {
+  grid-template-columns: var(--pane-collapsed-width) 1fr var(--right-pane-width);
+}
+
+#app.right-collapsed {
+  grid-template-columns: var(--left-pane-width) 1fr var(--pane-collapsed-width);
+}
+
+#app.left-collapsed.right-collapsed {
+  grid-template-columns: var(--pane-collapsed-width) 1fr var(--pane-collapsed-width);
 }
 
 #left-pane,
@@ -73,6 +87,41 @@ body {
 
 #right-pane {
   border-left: 1px solid var(--color-border);
+}
+
+/* Pane toggle button — always visible at top of each pane */
+.pane-toggle {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  width: var(--pane-collapsed-width);
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition);
+}
+
+.pane-toggle:hover {
+  background: var(--color-secondary);
+  color: var(--color-text);
+}
+
+#left-pane > .pane-toggle {
+  align-self: flex-end;
+}
+
+#right-pane > .pane-toggle {
+  align-self: flex-start;
+}
+
+/* Hide all pane content except the toggle when collapsed */
+#left-pane.collapsed > :not(.pane-toggle),
+#right-pane.collapsed > :not(.pane-toggle) {
+  display: none;
 }
 
 #center-pane {

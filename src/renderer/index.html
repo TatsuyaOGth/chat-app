@@ -15,6 +15,14 @@
     <div id="app">
       <!-- Left pane: session list (Phase 3 will populate it) + settings button -->
       <aside id="left-pane">
+        <button
+          id="left-pane-toggle"
+          class="pane-toggle"
+          type="button"
+          title="サイドバーを折りたたむ"
+          aria-label="サイドバーを折りたたむ"
+        >◀</button>
+
         <div class="pane-header">
           <h1 class="app-title">Chat App</h1>
         </div>
@@ -60,6 +68,14 @@
 
       <!-- Right pane: template selector + parameter editor -->
       <aside id="right-pane">
+        <button
+          id="right-pane-toggle"
+          class="pane-toggle"
+          type="button"
+          title="サイドバーを折りたたむ"
+          aria-label="サイドバーを折りたたむ"
+        >▶</button>
+
         <div class="pane-header">
           <label for="template-select" class="label">テンプレート</label>
           <select id="template-select" class="select">
