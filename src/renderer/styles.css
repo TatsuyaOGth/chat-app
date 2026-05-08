@@ -225,6 +225,7 @@ body {
   flex-direction: column;
   gap: 4px;
   max-width: 80%;
+  min-width: 0;
 }
 
 .message--user {
@@ -252,6 +253,8 @@ body {
   line-height: 1.55;
   white-space: normal;  /* マークダウンレンダリング後の HTML に対応 */
   word-break: break-word;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message--assistant .message__content {
@@ -337,6 +340,21 @@ body {
   overflow-x: auto;
   max-height: 600px;
   overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.message__content pre::-webkit-scrollbar {
+  height: 5px;
+  width: 5px;
+}
+
+.message__content pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.message__content pre::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
 }
 
 .message__content pre code {
@@ -348,6 +366,8 @@ body {
   border-radius: 0;
   color: inherit;
   display: block;
+  white-space: pre;
+  word-break: normal;
 }
 
 /* リスト */
