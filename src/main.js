@@ -41,7 +41,8 @@ function ollamaRequest(method, pathname, body) {
     });
 
     req.setTimeout(OLLAMA_REQUEST_TIMEOUT_MS, () => {
-      req.destroy(new Error(`Ollama request timed out after ${OLLAMA_REQUEST_TIMEOUT_MS}ms`));
+      req.destroy();
+      reject(new Error(`Ollama request timed out after ${OLLAMA_REQUEST_TIMEOUT_MS}ms`));
     });
     req.on('error', reject);
     if (payload) req.write(payload);
