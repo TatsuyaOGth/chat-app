@@ -579,13 +579,16 @@ async function sendMessage() {
   try {
     sessionId = await ensureSession(text);
     const savedSession = await window.sessions.appendMessage(sessionId, userMsg);
-    if (!savedSession) throw new Error('セッションを保存できませんでした');
+    if (!savedSession) throw new Error('セッションへの保存に失敗しました');
   } catch (err) {
     messages.pop();
     userMsgEl.remove();
     messageInput.value = text;
     updateSendButton();
-    setStatus(`セッション保存エラー: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    const errorMessage = err instanceof Error
+      ? (err.message || '不明なエラー')
+      : (String(err) || '不明なエラー');
+    setStatus(`セッション保存エラー: ${errorMessage}`, 'error');
     return;
   }
 
