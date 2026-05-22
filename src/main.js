@@ -11,6 +11,7 @@ const storage = require('./storage');
 // ---------------------------------------------------------------------------
 const OLLAMA_HOST = 'localhost';
 const OLLAMA_PORT = 11434;
+const OLLAMA_REQUEST_TIMEOUT_MS = 10_000;
 
 /** Low-level helper: issue an HTTP request to the local Ollama server. */
 function ollamaRequest(method, pathname, body) {
@@ -39,6 +40,9 @@ function ollamaRequest(method, pathname, body) {
       });
     });
 
+    req.setTimeout(OLLAMA_REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Ollama request timed out after ${OLLAMA_REQUEST_TIMEOUT_MS}ms`));
+    });
     req.on('error', reject);
     if (payload) req.write(payload);
     req.end();
