@@ -95,7 +95,9 @@ function configureMarked() {
     renderer: {
       code(token) {
         const code = token.text || '';
-        const lang = (token.lang || '').trim().toLowerCase();
+        const rawLang = (token.lang || '').trim().toLowerCase();
+        const langMatch = rawLang.match(/^\S+/);
+        const lang = langMatch ? langMatch[0] : '';
         const langClass = lang ? ` language-${escapeHtml(lang)}` : '';
 
         // 50000文字以上のコードはハイライトをスキップ（パフォーマンス対策）
