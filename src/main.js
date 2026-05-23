@@ -11,6 +11,7 @@ const storage = require('./storage');
 // ---------------------------------------------------------------------------
 const OLLAMA_HOST = 'localhost';
 const OLLAMA_PORT = 11434;
+const OLLAMA_REQUEST_TIMEOUT_MS = 10_000;
 
 /** ms of silence before an in-flight stream is declared timed-out. */
 const INACTIVITY_TIMEOUT_MS = 30_000;
@@ -21,6 +22,18 @@ const activeRequests = new Map();
 /** Low-level helper: issue an HTTP request to the local Ollama server. */
 function ollamaRequest(method, pathname, body) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const resolveOnce = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const rejectOnce = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
     const payload = body ? JSON.stringify(body) : null;
     const options = {
       hostname: OLLAMA_HOST,
@@ -38,14 +51,18 @@ function ollamaRequest(method, pathname, body) {
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
         try {
-          resolve(JSON.parse(data));
+          resolveOnce(JSON.parse(data));
         } catch {
-          resolve(data);
+          resolveOnce(data);
         }
       });
     });
 
-    req.on('error', reject);
+    req.setTimeout(OLLAMA_REQUEST_TIMEOUT_MS, () => {
+      req.destroy();
+      rejectOnce(new Error(`Ollama request timed out after ${OLLAMA_REQUEST_TIMEOUT_MS}ms`));
+    });
+    req.on('error', rejectOnce);
     if (payload) req.write(payload);
     req.end();
   });
