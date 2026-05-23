@@ -571,12 +571,26 @@ async function sendMessage() {
   // Render user message + persist
   const userMsg = { role: 'user', content: text };
   messages.push(userMsg);
-  appendMessage('user', text);
+  const userMsgEl = appendMessage('user', text);
   messageInput.value = '';
   updateSendButton();
 
-  const sessionId = await ensureSession(text);
-  await window.sessions.appendMessage(sessionId, userMsg);
+  let sessionId;
+  try {
+    sessionId = await ensureSession(text);
+    const savedSession = await window.sessions.appendMessage(sessionId, userMsg);
+    if (!savedSession) throw new Error('セッションへの保存に失敗しました');
+  } catch (err) {
+    messages.pop();
+    userMsgEl.remove();
+    messageInput.value = text;
+    updateSendButton();
+    const errorMessage = err instanceof Error
+      ? (err.message || '不明なエラー')
+      : (String(err) || '不明なエラー');
+    setStatus(`セッション保存エラー: ${errorMessage}`, 'error');
+    return;
+  }
 
   // Prepare assistant bubble
   const assistantWrapper = appendMessage('assistant', '');
