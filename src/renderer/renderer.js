@@ -88,28 +88,39 @@ function configureMarked() {
 
   marked.setOptions({
     gfm: true,              // GitHub Flavored Markdown (テーブル、タスクリスト対応)
-    breaks: false,          // 単一改行を <br> にしない（マークダウン標準に従う）
-    highlight: function(code, lang) {
-      // 50000文字以上のコードはハイライトをスキップ（パフォーマンス対策）
-      if (code.length > 50000) {
-        return code;
-      }
+    breaks: false           // 単一改行を <br> にしない（マークダウン標準に従う）
+  });
 
-      // 言語が指定されている場合
-      if (lang && hljs.getLanguage(lang)) {
-        try {
-          return hljs.highlight(code, { language: lang }).value;
-        } catch (err) {
-          console.error('Highlight error:', err);
+  marked.use({
+    renderer: {
+      code(token) {
+        const code = token.text || '';
+        const rawLang = (token.lang || '').trim().toLowerCase();
+        const langMatch = rawLang.match(/^\S+/);
+        const lang = langMatch ? langMatch[0] : '';
+        const langClass = lang ? ` language-${escapeHtml(lang)}` : '';
+
+        // 50000文字以上のコードはハイライトをスキップ（パフォーマンス対策）
+        if (code.length > 50000) {
+          return `<pre><code class="hljs${langClass}">${escapeHtml(code)}</code></pre>\n`;
         }
-      }
 
-      // 自動言語検出
-      try {
-        return hljs.highlightAuto(code).value;
-      } catch (err) {
-        console.error('Auto-highlight error:', err);
-        return code;
+        if (lang && hljs.getLanguage(lang)) {
+          try {
+            const highlighted = hljs.highlight(code, { language: lang }).value;
+            return `<pre><code class="hljs${langClass}">${highlighted}</code></pre>\n`;
+          } catch (err) {
+            console.error('Highlight error:', err);
+          }
+        }
+
+        try {
+          const highlighted = hljs.highlightAuto(code).value;
+          return `<pre><code class="hljs${langClass}">${highlighted}</code></pre>\n`;
+        } catch (err) {
+          console.error('Auto-highlight error:', err);
+          return `<pre><code class="hljs${langClass}">${escapeHtml(code)}</code></pre>\n`;
+        }
       }
     }
   });
