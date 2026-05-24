@@ -677,7 +677,7 @@ function openUserPromptEdit(wrapper, userMsg) {
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
   cancelBtn.classList.add('message__edit-action', 'message__edit-action--cancel');
-  cancelBtn.textContent = '×';
+  cancelBtn.textContent = 'キャンセル';
   cancelBtn.title = 'キャンセル';
   cancelBtn.setAttribute('aria-label', '編集をキャンセル');
 
