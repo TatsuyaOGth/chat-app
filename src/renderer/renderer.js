@@ -25,16 +25,16 @@ let activePromptEdit = null;
 /** Cached list of available Ollama model names (used by the model dropdown). */
 let modelOptions = [];
 
-/** All saved templates, in display order. Renamed to avoid clash with window.templates. */
-let templateList = [];
+/** All saved presets, in display order. Renamed to avoid clash with window.presets. */
+let presetList = [];
 
-/** ID of the currently selected template, or null when editing unsaved values. */
-let activeTemplateId = null;
+/** ID of the currently selected preset, or null when editing unsaved values. */
+let activePresetId = null;
 
 /**
  * Working copy of the parameter values currently in the editor.
- * Edits modify this object only; the saved template stays untouched until
- * the user clicks "上書き保存" or "新規テンプレート".
+ * Edits modify this object only; the saved preset stays untouched until
+ * the user clicks "上書き保存" or "新規プリセット".
  */
 let workingParams = window.Params.emptyParams();
 
@@ -63,15 +63,15 @@ const newSessionBtn = document.getElementById('new-session-btn');
 const sessionListEl = document.getElementById('session-list');
 const settingsBtn = document.getElementById('settings-btn');
 
-const templateSelect = document.getElementById('template-select');
+const presetSelect = document.getElementById('preset-select');
 const paramEditor = document.getElementById('param-editor');
-const saveTemplateBtn = document.getElementById('save-template-btn');
-const newTemplateBtn = document.getElementById('new-template-btn');
-const templateNameInput = document.getElementById('template-name-input');
+const savePresetBtn = document.getElementById('save-preset-btn');
+const newPresetBtn = document.getElementById('new-preset-btn');
+const presetNameInput = document.getElementById('preset-name-input');
 
 const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
-const settingsTemplateList = document.getElementById('settings-template-list');
+const settingsPresetList = document.getElementById('settings-preset-list');
 
 const appEl = document.getElementById('app');
 const leftPaneEl = document.getElementById('left-pane');
@@ -227,74 +227,74 @@ async function loadModels() {
 }
 
 // ---------------------------------------------------------------------------
-// Templates
+// Presets
 // ---------------------------------------------------------------------------
 
-async function loadTemplates() {
-  templateList = await window.templates.list();
-  renderTemplateSelect();
+async function loadPresets() {
+  presetList = await window.presets.list();
+  renderPresetSelect();
 }
 
-function renderTemplateSelect() {
-  templateSelect.innerHTML = '';
+function renderPresetSelect() {
+  presetSelect.innerHTML = '';
 
   const placeholder = document.createElement('option');
   placeholder.value = '';
   placeholder.textContent = '（新規 / 未保存）';
-  templateSelect.appendChild(placeholder);
+  presetSelect.appendChild(placeholder);
 
-  for (const t of templateList) {
+  for (const t of presetList) {
     const opt = document.createElement('option');
     opt.value = t.id;
     opt.textContent = t.name;
-    templateSelect.appendChild(opt);
+    presetSelect.appendChild(opt);
   }
 
-  templateSelect.value = activeTemplateId ?? '';
-  saveTemplateBtn.disabled = !activeTemplateId;
+  presetSelect.value = activePresetId ?? '';
+  savePresetBtn.disabled = !activePresetId;
 }
 
-function selectTemplate(id) {
-  activeTemplateId = id || null;
-  if (activeTemplateId) {
-    const t = templateList.find((tt) => tt.id === activeTemplateId);
+function selectPreset(id) {
+  activePresetId = id || null;
+  if (activePresetId) {
+    const t = presetList.find((tt) => tt.id === activePresetId);
     workingParams = { ...window.Params.emptyParams(), ...(t?.params || {}) };
-    templateNameInput.value = t?.name ?? '';
+    presetNameInput.value = t?.name ?? '';
   } else {
     workingParams = window.Params.emptyParams();
-    templateNameInput.value = '';
+    presetNameInput.value = '';
   }
-  renderTemplateSelect();
+  renderPresetSelect();
   renderEditor();
   updateSendButton();
 }
 
-async function saveTemplateOverwrite() {
-  if (!activeTemplateId) return;
-  const name = templateNameInput.value.trim();
-  const updated = await window.templates.update(activeTemplateId, {
+async function savePresetOverwrite() {
+  if (!activePresetId) return;
+  const name = presetNameInput.value.trim();
+  const updated = await window.presets.update(activePresetId, {
     name: name || undefined,
     params: { ...workingParams },
   });
   if (!updated) return;
-  await loadTemplates();
-  setStatus(`テンプレート「${updated.name}」を更新しました`);
+  await loadPresets();
+  setStatus(`プリセット「${updated.name}」を更新しました`);
 }
 
-async function saveTemplateAsNew() {
-  const name = templateNameInput.value.trim();
+async function savePresetAsNew() {
+  const name = presetNameInput.value.trim();
   if (!name) {
-    setStatus('テンプレート名を入力してください', 'warn');
-    templateNameInput.focus();
+    setStatus('プリセット名を入力してください', 'warn');
+    presetNameInput.focus();
     return;
   }
-  const created = await window.templates.create({
+  const created = await window.presets.create({
     name,
     params: { ...workingParams },
   });
-  activeTemplateId = created.id;
-  await loadTemplates();
-  setStatus(`テンプレート「${name}」を作成しました`);
+  activePresetId = created.id;
+  await loadPresets();
+  setStatus(`プリセット「${name}」を作成しました`);
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ function renderEditor() {
 // ---------------------------------------------------------------------------
 
 function openSettings() {
-  renderSettingsTemplateList();
+  renderSettingsPresetList();
   if (typeof settingsModal.showModal === 'function') {
     settingsModal.showModal();
   } else {
@@ -337,46 +337,46 @@ function closeSettings() {
 }
 
 /**
- * Render the template management list inside the settings modal.
+ * Render the preset management list inside the settings modal.
  * Each row supports HTML5 drag-and-drop for reordering and a delete button.
  */
-function renderSettingsTemplateList() {
-  settingsTemplateList.innerHTML = '';
+function renderSettingsPresetList() {
+  settingsPresetList.innerHTML = '';
 
-  if (templateList.length === 0) {
+  if (presetList.length === 0) {
     const empty = document.createElement('li');
-    empty.classList.add('template-list__empty');
-    empty.textContent = '保存されたテンプレートはありません。右ペインで作成できます。';
-    settingsTemplateList.appendChild(empty);
+    empty.classList.add('preset-list__empty');
+    empty.textContent = '保存されたプリセットはありません。右ペインで作成できます。';
+    settingsPresetList.appendChild(empty);
     return;
   }
 
-  for (const t of templateList) {
-    settingsTemplateList.appendChild(buildTemplateListItem(t));
+  for (const t of presetList) {
+    settingsPresetList.appendChild(buildPresetListItem(t));
   }
 }
 
-function buildTemplateListItem(template) {
+function buildPresetListItem(preset) {
   const li = document.createElement('li');
-  li.classList.add('template-list__item');
+  li.classList.add('preset-list__item');
   li.draggable = true;
-  li.dataset.id = template.id;
+  li.dataset.id = preset.id;
 
   const handle = document.createElement('span');
-  handle.classList.add('template-list__handle');
+  handle.classList.add('preset-list__handle');
   handle.textContent = '≡';
   handle.setAttribute('aria-hidden', 'true');
 
   const name = document.createElement('span');
-  name.classList.add('template-list__name');
-  name.textContent = template.name;
-  name.title = template.name;
+  name.classList.add('preset-list__name');
+  name.textContent = preset.name;
+  name.title = preset.name;
 
   const del = document.createElement('button');
   del.type = 'button';
-  del.classList.add('template-list__delete', 'btn', 'btn-danger');
+  del.classList.add('preset-list__delete', 'btn', 'btn-danger');
   del.textContent = '削除';
-  del.addEventListener('click', () => deleteTemplateFromSettings(template.id));
+  del.addEventListener('click', () => deletePresetFromSettings(preset.id));
 
   li.appendChild(handle);
   li.appendChild(name);
@@ -386,21 +386,21 @@ function buildTemplateListItem(template) {
   return li;
 }
 
-async function deleteTemplateFromSettings(id) {
-  const target = templateList.find((t) => t.id === id);
+async function deletePresetFromSettings(id) {
+  const target = presetList.find((t) => t.id === id);
   if (!target) return;
-  if (!await window.app.confirm(`テンプレート「${target.name}」を削除しますか？`)) return;
+  if (!await window.app.confirm(`プリセット「${target.name}」を削除しますか？`)) return;
 
-  await window.templates.delete(id);
+  await window.presets.delete(id);
 
-  // Drop selection if the active template was deleted; the user is then
+  // Drop selection if the active preset was deleted; the user is then
   // editing free-form params again.
-  if (activeTemplateId === id) {
-    activeTemplateId = null;
+  if (activePresetId === id) {
+    activePresetId = null;
   }
 
-  await loadTemplates();
-  renderSettingsTemplateList();
+  await loadPresets();
+  renderSettingsPresetList();
 }
 
 // Drag-and-drop reordering ---------------------------------------------------
@@ -410,7 +410,7 @@ let dragSourceId = null;
 function attachDragHandlers(li) {
   li.addEventListener('dragstart', (e) => {
     dragSourceId = li.dataset.id;
-    li.classList.add('template-list__item--dragging');
+    li.classList.add('preset-list__item--dragging');
     // Required in Firefox to actually start a drag.
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
@@ -420,12 +420,12 @@ function attachDragHandlers(li) {
 
   li.addEventListener('dragend', () => {
     dragSourceId = null;
-    li.classList.remove('template-list__item--dragging');
-    settingsTemplateList
-      .querySelectorAll('.template-list__item--drop-before, .template-list__item--drop-after')
+    li.classList.remove('preset-list__item--dragging');
+    settingsPresetList
+      .querySelectorAll('.preset-list__item--drop-before, .preset-list__item--drop-after')
       .forEach((el) => {
-        el.classList.remove('template-list__item--drop-before');
-        el.classList.remove('template-list__item--drop-after');
+        el.classList.remove('preset-list__item--drop-before');
+        el.classList.remove('preset-list__item--drop-after');
       });
   });
 
@@ -435,13 +435,13 @@ function attachDragHandlers(li) {
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     const rect = li.getBoundingClientRect();
     const before = e.clientY < rect.top + rect.height / 2;
-    li.classList.toggle('template-list__item--drop-before', before);
-    li.classList.toggle('template-list__item--drop-after', !before);
+    li.classList.toggle('preset-list__item--drop-before', before);
+    li.classList.toggle('preset-list__item--drop-after', !before);
   });
 
   li.addEventListener('dragleave', () => {
-    li.classList.remove('template-list__item--drop-before');
-    li.classList.remove('template-list__item--drop-after');
+    li.classList.remove('preset-list__item--drop-before');
+    li.classList.remove('preset-list__item--drop-after');
   });
 
   li.addEventListener('drop', async (e) => {
@@ -449,21 +449,21 @@ function attachDragHandlers(li) {
     if (!dragSourceId || dragSourceId === li.dataset.id) return;
     const rect = li.getBoundingClientRect();
     const before = e.clientY < rect.top + rect.height / 2;
-    await reorderTemplates(dragSourceId, li.dataset.id, before);
+    await reorderPresets(dragSourceId, li.dataset.id, before);
   });
 }
 
-async function reorderTemplates(sourceId, targetId, insertBefore) {
-  const ids = templateList.map((t) => t.id);
+async function reorderPresets(sourceId, targetId, insertBefore) {
+  const ids = presetList.map((t) => t.id);
   const filtered = ids.filter((id) => id !== sourceId);
   const targetIdx = filtered.indexOf(targetId);
   if (targetIdx === -1) return;
   const insertAt = insertBefore ? targetIdx : targetIdx + 1;
   filtered.splice(insertAt, 0, sourceId);
 
-  await window.templates.reorder(filtered);
-  await loadTemplates();
-  renderSettingsTemplateList();
+  await window.presets.reorder(filtered);
+  await loadPresets();
+  renderSettingsPresetList();
 }
 
 // ---------------------------------------------------------------------------
@@ -575,7 +575,7 @@ function deriveTitle(text) {
 async function ensureSession(firstUserText) {
   if (activeSessionId) return activeSessionId;
   const session = await window.sessions.create({
-    templateId: activeTemplateId,
+    presetId: activePresetId,
     title: deriveTitle(firstUserText),
   });
   activeSessionId = session.id;
@@ -1076,9 +1076,9 @@ settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettings();
 });
 
-templateSelect.addEventListener('change', () => selectTemplate(templateSelect.value));
-saveTemplateBtn.addEventListener('click', saveTemplateOverwrite);
-newTemplateBtn.addEventListener('click', saveTemplateAsNew);
+presetSelect.addEventListener('change', () => selectPreset(presetSelect.value));
+savePresetBtn.addEventListener('click', savePresetOverwrite);
+newPresetBtn.addEventListener('click', savePresetAsNew);
 
 cancelBtn.addEventListener('click', () => {
   if (currentRequestId !== null) {
@@ -1114,6 +1114,6 @@ inputForm.addEventListener('submit', (e) => {
   applyPaneState(paneState);
 
   renderEditor();
-  await Promise.all([loadModels(), loadTemplates(), loadSessions()]);
+  await Promise.all([loadModels(), loadPresets(), loadSessions()]);
   messageInput.focus();
 })();

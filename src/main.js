@@ -296,15 +296,15 @@ ipcMain.handle('dialog:confirm', async (event, message) => {
 });
 
 // ---------------------------------------------------------------------------
-// IPC handlers — Templates
+// IPC handlers — Presets
 // ---------------------------------------------------------------------------
 
-ipcMain.handle('templates:list', () => storage.templates.list());
-ipcMain.handle('templates:get', (_e, id) => storage.templates.get(id));
-ipcMain.handle('templates:create', (_e, data) => storage.templates.create(data));
-ipcMain.handle('templates:update', (_e, id, patch) => storage.templates.update(id, patch));
-ipcMain.handle('templates:delete', (_e, id) => storage.templates.delete(id));
-ipcMain.handle('templates:reorder', (_e, orderedIds) => storage.templates.reorder(orderedIds));
+ipcMain.handle('presets:list', () => storage.presets.list());
+ipcMain.handle('presets:get', (_e, id) => storage.presets.get(id));
+ipcMain.handle('presets:create', (_e, data) => storage.presets.create(data));
+ipcMain.handle('presets:update', (_e, id, patch) => storage.presets.update(id, patch));
+ipcMain.handle('presets:delete', (_e, id) => storage.presets.delete(id));
+ipcMain.handle('presets:reorder', (_e, orderedIds) => storage.presets.reorder(orderedIds));
 
 // ---------------------------------------------------------------------------
 // IPC handlers — Sessions
