@@ -670,7 +670,7 @@ function openUserPromptEdit(wrapper, userMsg) {
   const doneBtn = document.createElement('button');
   doneBtn.type = 'button';
   doneBtn.classList.add('message__edit-action', 'message__edit-action--done');
-  doneBtn.textContent = '◯';
+  doneBtn.textContent = '再送';
   doneBtn.title = '完了';
   doneBtn.setAttribute('aria-label', '編集を完了');
 
