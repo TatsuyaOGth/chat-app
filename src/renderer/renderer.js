@@ -16,6 +16,12 @@ let requestCounter = 0;
 /** requestId of the currently in-flight generation, or null when idle. */
 let currentRequestId = null;
 
+/** Information about the current in-flight generation (if any). */
+let activeGeneration = null;
+
+/** Information about the current prompt edit UI (if any). */
+let activePromptEdit = null;
+
 /** Cached list of available Ollama model names (used by the model dropdown). */
 let modelOptions = [];
 
@@ -528,6 +534,9 @@ async function loadSession(id) {
   messagesEl.innerHTML = '';
   for (const m of messages) {
     const el = appendMessage(m.role, m.content);
+    if (m.role === 'user') {
+      attachUserEditButton(el, m);
+    }
     if (m.role === 'assistant') {
       attachAssistantButtons(el, m.paramsSnapshot || null);
     }
@@ -595,6 +604,179 @@ function appendMessage(role, initialText) {
   wrapper.appendChild(content);
   messagesEl.appendChild(wrapper);
   return wrapper; // return the whole wrapper so callers can attach extras
+}
+
+function getChatRequestParams() {
+  const { model, system, options } = window.Params.splitParamsForChat(workingParams);
+  if (!model) {
+    setStatus('右ペインでモデルを選択してください', 'warn');
+    return null;
+  }
+  return { model, system, options };
+}
+
+function setMessageContent(contentEl, text) {
+  contentEl.dataset.raw = text;
+  contentEl.innerHTML = renderMarkdown(text);
+}
+
+function attachUserEditButton(wrapper, userMsg) {
+  if (wrapper.querySelector('.message__edit-btn')) return;
+
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.classList.add('message__edit-btn');
+  editBtn.textContent = '✎';
+  editBtn.title = 'プロンプトを編集';
+  editBtn.setAttribute('aria-label', 'プロンプトを編集');
+  editBtn.addEventListener('click', () => {
+    openUserPromptEdit(wrapper, userMsg);
+  });
+  wrapper.appendChild(editBtn);
+}
+
+function closeActivePromptEdit() {
+  if (!activePromptEdit) return;
+  const { wrapper, userMsg, originalText } = activePromptEdit;
+  const contentEl = wrapper.querySelector('.message__content');
+  if (contentEl) setMessageContent(contentEl, userMsg?.content ?? originalText);
+  wrapper.classList.remove('message--editing');
+  activePromptEdit = null;
+}
+
+function openUserPromptEdit(wrapper, userMsg) {
+  if (activePromptEdit && activePromptEdit.wrapper !== wrapper) {
+    closeActivePromptEdit();
+  }
+
+  const contentEl = wrapper.querySelector('.message__content');
+  if (!contentEl) return;
+  const originalText = userMsg.content || '';
+
+  wrapper.classList.add('message--editing');
+  contentEl.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.classList.add('message__edit-form');
+
+  const textarea = document.createElement('textarea');
+  textarea.classList.add('message__edit-input');
+  textarea.value = originalText;
+  textarea.setAttribute('aria-label', 'プロンプト編集');
+
+  const actions = document.createElement('div');
+  actions.classList.add('message__edit-actions');
+
+  const doneBtn = document.createElement('button');
+  doneBtn.type = 'button';
+  doneBtn.classList.add('message__edit-action', 'message__edit-action--done');
+  doneBtn.textContent = '再送';
+  doneBtn.title = '完了';
+  doneBtn.setAttribute('aria-label', '編集を完了');
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.classList.add('message__edit-action', 'message__edit-action--cancel');
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.title = 'キャンセル';
+  cancelBtn.setAttribute('aria-label', '編集をキャンセル');
+
+  actions.appendChild(doneBtn);
+  actions.appendChild(cancelBtn);
+  form.appendChild(textarea);
+  form.appendChild(actions);
+  contentEl.appendChild(form);
+
+  activePromptEdit = { wrapper, userMsg, originalText };
+
+  const finishEdit = () => {
+    closeActivePromptEdit();
+  };
+
+  cancelBtn.addEventListener('click', finishEdit);
+
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      finishEdit();
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      doneBtn.click();
+    }
+  });
+
+  doneBtn.addEventListener('click', async () => {
+    const nextText = textarea.value.trim();
+    if (!nextText) {
+      setStatus('プロンプトは空にできません', 'warn');
+      textarea.focus();
+      return;
+    }
+    if (nextText === originalText) {
+      finishEdit();
+      return;
+    }
+    await applyPromptEdit(userMsg, wrapper, nextText);
+    finishEdit();
+  });
+
+  textarea.focus();
+  textarea.selectionStart = textarea.value.length;
+  textarea.selectionEnd = textarea.value.length;
+}
+
+async function cancelActiveGenerationForEdit() {
+  if (!activeGeneration || currentRequestId === null) return;
+  activeGeneration.discardAssistantBubble = true;
+  activeGeneration.suppressCancelledStatus = true;
+  window.ollama.cancel(currentRequestId);
+  await activeGeneration.finished;
+}
+
+async function applyPromptEdit(userMsg, wrapper, nextText) {
+  const userIdx = messages.indexOf(userMsg);
+  if (userIdx === -1 || !activeSessionId) return;
+
+  await cancelActiveGenerationForEdit();
+
+  const previousText = userMsg.content;
+  const previousMessages = messages;
+  const truncatedMessages = previousMessages.slice(0, userIdx + 1);
+
+  userMsg.content = nextText;
+  messages = truncatedMessages;
+
+  try {
+    const saved = await window.sessions.update(activeSessionId, { messages });
+    if (!saved) throw new Error('セッションへの保存に失敗しました');
+  } catch (err) {
+    userMsg.content = previousText;
+    messages = previousMessages;
+    const errorMessage = err instanceof Error
+      ? (err.message || '不明なエラー')
+      : (String(err) || '不明なエラー');
+    setStatus(`セッション保存エラー: ${errorMessage}`, 'error');
+    return;
+  }
+
+  const contentEl = wrapper.querySelector('.message__content');
+  if (contentEl) setMessageContent(contentEl, nextText);
+
+  let node = wrapper.nextElementSibling;
+  while (node) {
+    const next = node.nextElementSibling;
+    node.remove();
+    node = next;
+  }
+
+  const chatParams = getChatRequestParams();
+  if (!chatParams) return;
+  const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
+  await startAssistantGeneration({
+    sessionId: activeSessionId,
+    ...chatParams,
+    paramsSnapshot,
+  });
 }
 
 /**
@@ -688,15 +870,112 @@ function updateSendButton() {
   sendBtn.disabled = !hasText || !hasModel || isGenerating;
 }
 
+async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot }) {
+  const assistantWrapper = appendMessage('assistant', '');
+  const assistantContent = assistantWrapper.querySelector('.message__content');
+  isGenerating = true;
+  sendBtn.disabled = true;
+  cancelBtn.style.display = '';
+  setStatus('生成中…');
+
+  const requestId = String(++requestCounter);
+  currentRequestId = requestId;
+  let responseText = '';
+  let done = false;
+  let finishCalled = false;
+  let finishResolve;
+  const finished = new Promise((resolve) => { finishResolve = resolve; });
+
+  const generation = {
+    requestId,
+    assistantWrapper,
+    discardAssistantBubble: false,
+    suppressCancelledStatus: false,
+    finished,
+  };
+  activeGeneration = generation;
+
+  const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
+    if (rid !== requestId) return;
+    if (content) {
+      responseText += content;
+      assistantContent.dataset.raw = responseText;
+      assistantContent.innerHTML = renderMarkdown(responseText);
+    }
+    if (isDone) {
+      done = true;
+      finish();
+    }
+  });
+
+  const unsubError = window.ollama.onChatError(({ requestId: rid, error, cancelled }) => {
+    if (rid !== requestId) return;
+    if (cancelled) {
+      // Voluntary cancel: keep partial text unless this request is being
+      // explicitly discarded by prompt editing.
+      if (!generation.discardAssistantBubble && !responseText) {
+        assistantContent.textContent = '[キャンセル]';
+        assistantContent.classList.add('message__content--error');
+      }
+      if (!generation.suppressCancelledStatus) {
+        setStatus('生成をキャンセルしました', 'warn');
+      }
+    } else {
+      assistantContent.textContent = `[エラー: ${error}]`;
+      assistantContent.classList.add('message__content--error');
+      setStatus(`エラー: ${error}`, 'error');
+    }
+    finish();
+  });
+
+  async function finish() {
+    if (finishCalled) return;
+    finishCalled = true;
+    unsubChunk();
+    unsubError();
+    isGenerating = false;
+    currentRequestId = null;
+    cancelBtn.style.display = 'none';
+    if (activeGeneration === generation) activeGeneration = null;
+
+    if (generation.discardAssistantBubble) {
+      generation.assistantWrapper.remove();
+    }
+
+    if (!generation.discardAssistantBubble && done && responseText) {
+      const assistantMsg = {
+        role: 'assistant',
+        content: responseText,
+        paramsSnapshot,
+      };
+      messages.push(assistantMsg);
+      attachAssistantButtons(assistantWrapper, paramsSnapshot);
+      try {
+        await window.sessions.appendMessage(sessionId, assistantMsg);
+        await loadSessions();
+        setStatus('');
+      } catch {
+        setStatus('応答の保存に失敗しました（表示は正常です）', 'warn');
+      }
+    }
+    updateSendButton();
+    finishResolve();
+  }
+
+  window.ollama.chat(requestId, {
+    model,
+    messages: messagesForRequest(),
+    system,
+    options,
+  });
+}
+
 async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || isGenerating) return;
 
-  const { model, system, options } = window.Params.splitParamsForChat(workingParams);
-  if (!model) {
-    setStatus('右ペインでモデルを選択してください', 'warn');
-    return;
-  }
+  const chatParams = getChatRequestParams();
+  if (!chatParams) return;
 
   // Snapshot the params at the moment generation starts, so edits made during
   // the response don't leak into this assistant turn's audit trail.
@@ -706,6 +985,7 @@ async function sendMessage() {
   const userMsg = { role: 'user', content: text };
   messages.push(userMsg);
   const userMsgEl = appendMessage('user', text);
+  attachUserEditButton(userMsgEl, userMsg);
   const elRect = userMsgEl.getBoundingClientRect();
   const containerRect = messagesEl.getBoundingClientRect();
   messagesEl.scrollTo({ top: messagesEl.scrollTop + elRect.top - containerRect.top, behavior: 'smooth' });
@@ -729,83 +1009,10 @@ async function sendMessage() {
     return;
   }
 
-  // Prepare assistant bubble
-  const assistantWrapper = appendMessage('assistant', '');
-  const assistantContent = assistantWrapper.querySelector('.message__content');
-  isGenerating = true;
-  sendBtn.disabled = true;
-  cancelBtn.style.display = '';
-  setStatus('生成中…');
-
-  const requestId = String(++requestCounter);
-  currentRequestId = requestId;
-  let responseText = '';
-  let done = false;
-  let finishCalled = false;
-
-  const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
-    if (rid !== requestId) return;
-    if (content) {
-      responseText += content;
-      assistantContent.dataset.raw = responseText;
-      assistantContent.innerHTML = renderMarkdown(responseText);
-    }
-    if (isDone) {
-      done = true;
-      finish();
-    }
-  });
-
-  const unsubError = window.ollama.onChatError(({ requestId: rid, error, cancelled }) => {
-    if (rid !== requestId) return;
-    if (cancelled) {
-      // Voluntary cancel: keep any partial text; update status only.
-      if (!responseText) {
-        assistantContent.textContent = '[キャンセル]';
-        assistantContent.classList.add('message__content--error');
-      }
-      setStatus('生成をキャンセルしました', 'warn');
-    } else {
-      assistantContent.textContent = `[エラー: ${error}]`;
-      assistantContent.classList.add('message__content--error');
-      setStatus(`エラー: ${error}`, 'error');
-    }
-    finish();
-  });
-
-  async function finish() {
-    if (finishCalled) return;
-    finishCalled = true;
-    unsubChunk();
-    unsubError();
-    isGenerating = false;
-    currentRequestId = null;
-    cancelBtn.style.display = 'none';
-
-    if (done && responseText) {
-      const assistantMsg = {
-        role: 'assistant',
-        content: responseText,
-        paramsSnapshot,
-      };
-      messages.push(assistantMsg);
-      attachAssistantButtons(assistantWrapper, paramsSnapshot);
-      try {
-        await window.sessions.appendMessage(sessionId, assistantMsg);
-        await loadSessions();
-        setStatus('');
-      } catch {
-        setStatus('応答の保存に失敗しました（表示は正常です）', 'warn');
-      }
-    }
-    updateSendButton();
-  }
-
-  window.ollama.chat(requestId, {
-    model,
-    messages: messagesForRequest(),
-    system,
-    options,
+  await startAssistantGeneration({
+    sessionId,
+    ...chatParams,
+    paramsSnapshot,
   });
 }
 
@@ -815,6 +1022,7 @@ async function sendMessage() {
 
 function startNewChat() {
   if (isGenerating) return;
+  closeActivePromptEdit();
   activeSessionId = null;
   messages = [];
   messagesEl.innerHTML = '';
