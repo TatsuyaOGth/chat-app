@@ -324,12 +324,16 @@ body {
   border-radius: 4px;
   cursor: pointer;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity var(--transition), color var(--transition), background var(--transition);
+  transition: opacity var(--transition), visibility var(--transition), color var(--transition), background var(--transition);
 }
 
-.message--user:hover .message__edit-btn {
+.message--user:hover .message__edit-btn,
+.message--user:focus-within .message__edit-btn,
+.message__edit-btn:focus-visible {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 
