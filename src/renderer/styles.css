@@ -261,7 +261,7 @@ body {
 }
 
 #messages:empty::before {
-  content: "右ペインでテンプレートを選び、チャットを始めましょう。";
+  content: "右ペインでプリセットを選び、チャットを始めましょう。";
   color: var(--color-text-muted);
   font-size: 14px;
   text-align: center;
@@ -649,7 +649,7 @@ body {
 }
 
 /* ==========================================================================
-   Right pane — template & parameter editor
+   Right pane — preset & parameter editor
    ========================================================================== */
 
 .param-editor {
@@ -906,27 +906,27 @@ details[open] > .param-group__heading::before {
   border-color: var(--color-primary);
 }
 
-.template-actions {
+.preset-actions {
   flex-direction: column;
   gap: 6px;
 }
 
-.template-btn-row {
+.preset-btn-row {
   display: flex;
   gap: 8px;
 }
 
-.template-btn-row .btn {
+.preset-btn-row .btn {
   flex: 1;
 }
 
-.template-name-row {
+.preset-name-row {
   display: flex;
   gap: 6px;
   align-items: center;
 }
 
-.template-name-input {
+.preset-name-input {
   flex: 1;
   min-width: 0;
   background: var(--color-surface-raised);
@@ -938,7 +938,7 @@ details[open] > .param-group__heading::before {
   outline: none;
 }
 
-.template-name-input::placeholder {
+.preset-name-input::placeholder {
   color: var(--color-text-muted);
 }
 
@@ -1173,16 +1173,16 @@ details[open] > .param-group__heading::before {
   margin-bottom: 10px;
 }
 
-/* Template management list */
+/* Preset management list */
 
-.template-list {
+.preset-list {
   list-style: none;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.template-list__empty {
+.preset-list__empty {
   font-size: 12px;
   color: var(--color-text-muted);
   font-style: italic;
@@ -1193,7 +1193,7 @@ details[open] > .param-group__heading::before {
   border-radius: var(--radius);
 }
 
-.template-list__item {
+.preset-list__item {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1205,30 +1205,30 @@ details[open] > .param-group__heading::before {
   transition: opacity var(--transition);
 }
 
-.template-list__item:active {
+.preset-list__item:active {
   cursor: grabbing;
 }
 
-.template-list__item--dragging {
+.preset-list__item--dragging {
   opacity: 0.4;
 }
 
-.template-list__item--drop-before {
+.preset-list__item--drop-before {
   box-shadow: inset 0 2px 0 0 var(--color-primary);
 }
 
-.template-list__item--drop-after {
+.preset-list__item--drop-after {
   box-shadow: inset 0 -2px 0 0 var(--color-primary);
 }
 
-.template-list__handle {
+.preset-list__handle {
   color: var(--color-text-muted);
   font-size: 16px;
   user-select: none;
   flex-shrink: 0;
 }
 
-.template-list__name {
+.preset-list__name {
   flex: 1;
   min-width: 0;
   font-size: 13px;
@@ -1238,7 +1238,7 @@ details[open] > .param-group__heading::before {
   text-overflow: ellipsis;
 }
 
-.template-list__delete {
+.preset-list__delete {
   flex-shrink: 0;
   width: auto;
   padding: 5px 12px;

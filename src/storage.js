@@ -8,14 +8,14 @@ const crypto = require('node:crypto');
 // ---------------------------------------------------------------------------
 //
 // Two separate files in the OS userData folder:
-//   templates.json — parameter presets the user can pick from / edit
+//   presets.json  — parameter presets the user can pick from / edit
 //   history.json   — chat sessions with per-message paramsSnapshot
 //
 // Each store keeps its records as an ordered array under `items` so the user
 // can drag-and-drop reorder them in the settings modal (phase 4).
 
-const templatesStore = new Store({
-  name: 'templates',
+const presetsStore = new Store({
+  name: 'presets',
   defaults: { items: [] },
 });
 
@@ -23,6 +23,18 @@ const sessionsStore = new Store({
   name: 'history',
   defaults: { items: [] },
 });
+
+// Migrate from the old templates store name.
+const legacyTemplatesStore = new Store({
+  name: 'templates',
+  defaults: { items: [] },
+});
+if (presetsStore.get('items').length === 0) {
+  const legacyItems = legacyTemplatesStore.get('items');
+  if (legacyItems.length > 0) {
+    presetsStore.set('items', legacyItems);
+  }
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -33,33 +45,33 @@ function newId() {
 }
 
 // ---------------------------------------------------------------------------
-// Templates
+// Presets
 // ---------------------------------------------------------------------------
 
-function listTemplates() {
-  return templatesStore.get('items');
+function listPresets() {
+  return presetsStore.get('items');
 }
 
-function getTemplate(id) {
-  return listTemplates().find((t) => t.id === id) || null;
+function getPreset(id) {
+  return listPresets().find((p) => p.id === id) || null;
 }
 
-function createTemplate({ name, params }) {
-  const items = listTemplates();
-  const template = {
+function createPreset({ name, params }) {
+  const items = listPresets();
+  const preset = {
     id: newId(),
     name: name || 'Untitled',
     createdAt: nowIso(),
     updatedAt: nowIso(),
     params: params || {},
   };
-  templatesStore.set('items', [...items, template]);
-  return template;
+  presetsStore.set('items', [...items, preset]);
+  return preset;
 }
 
-function updateTemplate(id, patch) {
-  const items = listTemplates();
-  const idx = items.findIndex((t) => t.id === id);
+function updatePreset(id, patch) {
+  const items = listPresets();
+  const idx = items.findIndex((p) => p.id === id);
   if (idx === -1) return null;
   const updated = {
     ...items[idx],
@@ -70,25 +82,25 @@ function updateTemplate(id, patch) {
   };
   const next = [...items];
   next[idx] = updated;
-  templatesStore.set('items', next);
+  presetsStore.set('items', next);
   return updated;
 }
 
-function deleteTemplate(id) {
-  const items = listTemplates();
-  templatesStore.set('items', items.filter((t) => t.id !== id));
+function deletePreset(id) {
+  const items = listPresets();
+  presetsStore.set('items', items.filter((p) => p.id !== id));
   return true;
 }
 
-function reorderTemplates(orderedIds) {
-  const items = listTemplates();
-  const byId = new Map(items.map((t) => [t.id, t]));
+function reorderPresets(orderedIds) {
+  const items = listPresets();
+  const byId = new Map(items.map((p) => [p.id, p]));
   const reordered = orderedIds.map((id) => byId.get(id)).filter(Boolean);
   // Append any items that were not included in the order list (defensive)
-  for (const t of items) {
-    if (!orderedIds.includes(t.id)) reordered.push(t);
+  for (const p of items) {
+    if (!orderedIds.includes(p.id)) reordered.push(p);
   }
-  templatesStore.set('items', reordered);
+  presetsStore.set('items', reordered);
   return reordered;
 }
 
@@ -104,11 +116,11 @@ function getSession(id) {
   return listSessions().find((s) => s.id === id) || null;
 }
 
-function createSession({ templateId = null, title = '', messages = [] } = {}) {
+function createSession({ presetId = null, title = '', messages = [] } = {}) {
   const items = listSessions();
   const session = {
     id: newId(),
-    templateId,
+    presetId,
     title,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -154,13 +166,13 @@ function deleteSession(id) {
 }
 
 module.exports = {
-  templates: {
-    list: listTemplates,
-    get: getTemplate,
-    create: createTemplate,
-    update: updateTemplate,
-    delete: deleteTemplate,
-    reorder: reorderTemplates,
+  presets: {
+    list: listPresets,
+    get: getPreset,
+    create: createPreset,
+    update: updatePreset,
+    delete: deletePreset,
+    reorder: reorderPresets,
   },
   sessions: {
     list: listSessions,
