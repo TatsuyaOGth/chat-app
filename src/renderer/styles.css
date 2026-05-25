@@ -346,6 +346,10 @@ body {
   width: 80%;
 }
 
+.message--editing .message__content {
+  width: 100%;
+}
+
 .message__edit-form {
   display: flex;
   flex-direction: column;
