@@ -9,11 +9,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chat App</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="vendor/github-dark.min.css" />
   </head>
   <body>
     <div id="app">
       <!-- Left pane: session list (Phase 3 will populate it) + settings button -->
       <aside id="left-pane">
+        <button
+          id="left-pane-toggle"
+          class="pane-toggle"
+          type="button"
+          title="サイドバーを折りたたむ"
+          aria-label="サイドバーを折りたたむ"
+        >◀</button>
+
         <div class="pane-header">
           <h1 class="app-title">Chat App</h1>
         </div>
@@ -51,16 +60,25 @@
             aria-label="メッセージ入力"
           ></textarea>
           <button id="send-btn" type="submit" class="btn btn-primary" disabled>送信</button>
+          <button id="cancel-btn" type="button" class="btn btn-secondary" style="display:none" aria-label="生成を停止">停止</button>
         </form>
 
         <div id="status-bar" class="status-bar" aria-live="polite"></div>
       </main>
 
-      <!-- Right pane: template selector + parameter editor -->
+      <!-- Right pane: preset selector + parameter editor -->
       <aside id="right-pane">
+        <button
+          id="right-pane-toggle"
+          class="pane-toggle"
+          type="button"
+          title="サイドバーを折りたたむ"
+          aria-label="サイドバーを折りたたむ"
+        >▶</button>
+
         <div class="pane-header">
-          <label for="template-select" class="label">テンプレート</label>
-          <select id="template-select" class="select">
+          <label for="preset-select" class="label">プリセット</label>
+          <select id="preset-select" class="select">
             <option value="">（新規 / 未保存）</option>
           </select>
         </div>
@@ -69,18 +87,18 @@
           <!-- Parameter rows are rendered by params.js -->
         </div>
 
-        <div class="pane-footer template-actions">
+        <div class="pane-footer preset-actions">
           <input
-            id="template-name-input"
-            class="template-name-input"
+            id="preset-name-input"
+            class="preset-name-input"
             type="text"
-            placeholder="テンプレート名"
+            placeholder="プリセット名"
             maxlength="80"
-            aria-label="テンプレート名"
+            aria-label="プリセット名"
           />
-          <div class="template-btn-row">
-            <button id="save-template-btn" type="button" class="btn btn-secondary" disabled>上書き保存</button>
-            <button id="new-template-btn" type="button" class="btn btn-secondary">新規保存</button>
+          <div class="preset-btn-row">
+            <button id="save-preset-btn" type="button" class="btn btn-secondary" disabled>上書き保存</button>
+            <button id="new-preset-btn" type="button" class="btn btn-secondary">新規保存</button>
           </div>
         </div>
       </aside>
@@ -103,14 +121,19 @@
         </header>
 
         <section class="settings-section">
-          <h3 class="settings-section__heading">テンプレート管理</h3>
+          <h3 class="settings-section__heading">プリセット管理</h3>
           <p class="settings-section__hint">
             ドラッグ＆ドロップで並べ替えできます。
           </p>
-          <ul id="settings-template-list" class="template-list" aria-label="テンプレート一覧"></ul>
+          <ul id="settings-preset-list" class="preset-list" aria-label="プリセット一覧"></ul>
         </section>
       </form>
     </dialog>
+
+    <!-- Markdown & Syntax Highlighting -->
+    <script src="vendor/purify.min.js"></script>
+    <script src="vendor/marked.min.js"></script>
+    <script src="vendor/highlight.min.js"></script>
 
     <script src="params.js"></script>
     <script src="renderer.js"></script>

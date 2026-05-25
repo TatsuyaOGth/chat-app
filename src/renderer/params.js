@@ -252,6 +252,22 @@ function renderParamRow(spec, value, ctx) {
 
   header.appendChild(dot);
   header.appendChild(label);
+
+  if (spec.type === 'select-model' && typeof ctx.onReloadModels === 'function') {
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.classList.add('param-row__reload');
+    reload.textContent = '↻';
+    reload.title = 'モデル一覧を再読み込み';
+    reload.setAttribute('aria-label', 'モデル一覧を再読み込み');
+    reload.addEventListener('click', () => {
+      reload.disabled = true;
+      reload.classList.add('param-row__reload--spinning');
+      ctx.onReloadModels();
+    });
+    header.appendChild(reload);
+  }
+
   header.appendChild(reset);
   row.appendChild(header);
 

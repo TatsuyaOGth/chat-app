@@ -4,7 +4,8 @@
   "description": "Simple chat app for local LLM (Ollama)",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "setup-vendor": "node scripts/setup-vendor.js"
   },
   "keywords": [
     "electron",
@@ -18,6 +19,10 @@
     "electron": "^41.5.0"
   },
   "dependencies": {
-    "electron-store": "^8.2.0"
+    "electron-store": "^8.2.0",
+    "marked": "^14.1.4",
+    "highlight.js": "^11.11.1",
+    "dompurify": "^3.2.2",
+    "isomorphic-dompurify": "^2.18.0"
   }
 }

@@ -13,19 +13,28 @@ let isGenerating = false;
 /** Monotonically increasing request counter used as request ID. */
 let requestCounter = 0;
 
+/** requestId of the currently in-flight generation, or null when idle. */
+let currentRequestId = null;
+
+/** Information about the current in-flight generation (if any). */
+let activeGeneration = null;
+
+/** Information about the current prompt edit UI (if any). */
+let activePromptEdit = null;
+
 /** Cached list of available Ollama model names (used by the model dropdown). */
 let modelOptions = [];
 
-/** All saved templates, in display order. Renamed to avoid clash with window.templates. */
-let templateList = [];
+/** All saved presets, in display order. Renamed to avoid clash with window.presets. */
+let presetList = [];
 
-/** ID of the currently selected template, or null when editing unsaved values. */
-let activeTemplateId = null;
+/** ID of the currently selected preset, or null when editing unsaved values. */
+let activePresetId = null;
 
 /**
  * Working copy of the parameter values currently in the editor.
- * Edits modify this object only; the saved template stays untouched until
- * the user clicks "上書き保存" or "新規テンプレート".
+ * Edits modify this object only; the saved preset stays untouched until
+ * the user clicks "上書き保存" or "新規プリセット".
  */
 let workingParams = window.Params.emptyParams();
 
@@ -48,20 +57,139 @@ const messagesEl = document.getElementById('messages');
 const inputForm = document.getElementById('input-form');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
+const cancelBtn = document.getElementById('cancel-btn');
 const statusBar = document.getElementById('status-bar');
 const newSessionBtn = document.getElementById('new-session-btn');
 const sessionListEl = document.getElementById('session-list');
 const settingsBtn = document.getElementById('settings-btn');
 
-const templateSelect = document.getElementById('template-select');
+const presetSelect = document.getElementById('preset-select');
 const paramEditor = document.getElementById('param-editor');
-const saveTemplateBtn = document.getElementById('save-template-btn');
-const newTemplateBtn = document.getElementById('new-template-btn');
-const templateNameInput = document.getElementById('template-name-input');
+const savePresetBtn = document.getElementById('save-preset-btn');
+const newPresetBtn = document.getElementById('new-preset-btn');
+const presetNameInput = document.getElementById('preset-name-input');
 
 const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
-const settingsTemplateList = document.getElementById('settings-template-list');
+const settingsPresetList = document.getElementById('settings-preset-list');
+
+const appEl = document.getElementById('app');
+const leftPaneEl = document.getElementById('left-pane');
+const rightPaneEl = document.getElementById('right-pane');
+const leftPaneToggle = document.getElementById('left-pane-toggle');
+const rightPaneToggle = document.getElementById('right-pane-toggle');
+
+// ─────────────────────────────────────────────────────────────────
+// Markdown Configuration & Rendering
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Configure marked.js with GFM (GitHub Flavored Markdown) and highlight.js integration
+ */
+function configureMarked() {
+  if (typeof marked === 'undefined' || typeof hljs === 'undefined') {
+    console.warn('marked or highlight.js not loaded');
+    return;
+  }
+
+  marked.setOptions({
+    gfm: true,              // GitHub Flavored Markdown (テーブル、タスクリスト対応)
+    breaks: false           // 単一改行を <br> にしない（マークダウン標準に従う）
+  });
+
+  marked.use({
+    renderer: {
+      code(token) {
+        const code = token.text || '';
+        const rawLang = (token.lang || '').trim().toLowerCase();
+        const langMatch = rawLang.match(/^\S+/);
+        const lang = langMatch ? langMatch[0] : '';
+        const langClass = lang ? ` language-${escapeHtml(lang)}` : '';
+
+        // 50000文字以上のコードはハイライトをスキップ（パフォーマンス対策）
+        if (code.length > 50000) {
+          return `<pre><code class="hljs${langClass}">${escapeHtml(code)}</code></pre>\n`;
+        }
+
+        if (lang && hljs.getLanguage(lang)) {
+          try {
+            const highlighted = hljs.highlight(code, { language: lang }).value;
+            return `<pre><code class="hljs${langClass}">${highlighted}</code></pre>\n`;
+          } catch (err) {
+            console.error('Highlight error:', err);
+          }
+        }
+
+        try {
+          const highlighted = hljs.highlightAuto(code).value;
+          return `<pre><code class="hljs${langClass}">${highlighted}</code></pre>\n`;
+        } catch (err) {
+          console.error('Auto-highlight error:', err);
+          return `<pre><code class="hljs${langClass}">${escapeHtml(code)}</code></pre>\n`;
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Render markdown text to sanitized HTML
+ * @param {string} text - Markdown text
+ * @returns {string} Sanitized HTML
+ */
+function renderMarkdown(text) {
+  if (!text) return '';
+
+  // XSS 対策: DOMPurify が利用可能か確認
+  if (typeof DOMPurify === 'undefined') {
+    console.error('DOMPurify not loaded - falling back to escaped text');
+    return escapeHtml(text);
+  }
+
+  // マークダウンを HTML に変換
+  let html;
+  try {
+    html = marked.parse(text);
+  } catch (err) {
+    console.error('Markdown parse error:', err);
+    return escapeHtml(text);
+  }
+
+  // XSS 対策: HTML をサニタイズ
+  const clean = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'p', 'br', 'hr',
+      'strong', 'em', 'code', 'pre',
+      'a', 'img',
+      'ul', 'ol', 'li',
+      'blockquote',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td',
+      'span', 'div'
+    ],
+    ALLOWED_ATTR: [
+      'href', 'title', 'alt', 'src',
+      'class', 'id',
+      'start', 'type'  // ol の start 属性、type 属性
+    ],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select', 'button'],
+    FORBID_ATTR: ['onclick', 'onerror', 'onload', 'onmouseover', 'onfocus', 'onblur', 'style'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|ftp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i  // javascript:, data: を除外
+  });
+
+  return clean;
+}
+
+/**
+ * Escape HTML special characters (fallback for when DOMPurify is unavailable)
+ * @param {string} text
+ * @returns {string}
+ */
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
 
 // ---------------------------------------------------------------------------
 // Status bar
@@ -99,74 +227,74 @@ async function loadModels() {
 }
 
 // ---------------------------------------------------------------------------
-// Templates
+// Presets
 // ---------------------------------------------------------------------------
 
-async function loadTemplates() {
-  templateList = await window.templates.list();
-  renderTemplateSelect();
+async function loadPresets() {
+  presetList = await window.presets.list();
+  renderPresetSelect();
 }
 
-function renderTemplateSelect() {
-  templateSelect.innerHTML = '';
+function renderPresetSelect() {
+  presetSelect.innerHTML = '';
 
   const placeholder = document.createElement('option');
   placeholder.value = '';
   placeholder.textContent = '（新規 / 未保存）';
-  templateSelect.appendChild(placeholder);
+  presetSelect.appendChild(placeholder);
 
-  for (const t of templateList) {
+  for (const t of presetList) {
     const opt = document.createElement('option');
     opt.value = t.id;
     opt.textContent = t.name;
-    templateSelect.appendChild(opt);
+    presetSelect.appendChild(opt);
   }
 
-  templateSelect.value = activeTemplateId ?? '';
-  saveTemplateBtn.disabled = !activeTemplateId;
+  presetSelect.value = activePresetId ?? '';
+  savePresetBtn.disabled = !activePresetId;
 }
 
-function selectTemplate(id) {
-  activeTemplateId = id || null;
-  if (activeTemplateId) {
-    const t = templateList.find((tt) => tt.id === activeTemplateId);
+function selectPreset(id) {
+  activePresetId = id || null;
+  if (activePresetId) {
+    const t = presetList.find((tt) => tt.id === activePresetId);
     workingParams = { ...window.Params.emptyParams(), ...(t?.params || {}) };
-    templateNameInput.value = t?.name ?? '';
+    presetNameInput.value = t?.name ?? '';
   } else {
     workingParams = window.Params.emptyParams();
-    templateNameInput.value = '';
+    presetNameInput.value = '';
   }
-  renderTemplateSelect();
+  renderPresetSelect();
   renderEditor();
   updateSendButton();
 }
 
-async function saveTemplateOverwrite() {
-  if (!activeTemplateId) return;
-  const name = templateNameInput.value.trim();
-  const updated = await window.templates.update(activeTemplateId, {
+async function savePresetOverwrite() {
+  if (!activePresetId) return;
+  const name = presetNameInput.value.trim();
+  const updated = await window.presets.update(activePresetId, {
     name: name || undefined,
     params: { ...workingParams },
   });
   if (!updated) return;
-  await loadTemplates();
-  setStatus(`テンプレート「${updated.name}」を更新しました`);
+  await loadPresets();
+  setStatus(`プリセット「${updated.name}」を更新しました`);
 }
 
-async function saveTemplateAsNew() {
-  const name = templateNameInput.value.trim();
+async function savePresetAsNew() {
+  const name = presetNameInput.value.trim();
   if (!name) {
-    setStatus('テンプレート名を入力してください', 'warn');
-    templateNameInput.focus();
+    setStatus('プリセット名を入力してください', 'warn');
+    presetNameInput.focus();
     return;
   }
-  const created = await window.templates.create({
+  const created = await window.presets.create({
     name,
     params: { ...workingParams },
   });
-  activeTemplateId = created.id;
-  await loadTemplates();
-  setStatus(`テンプレート「${name}」を作成しました`);
+  activePresetId = created.id;
+  await loadPresets();
+  setStatus(`プリセット「${name}」を作成しました`);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +304,7 @@ async function saveTemplateAsNew() {
 function renderEditor() {
   window.Params.renderParamEditor(paramEditor, workingParams, {
     modelOptions,
+    onReloadModels: loadModels,
     onChange: (key, value, opts = {}) => {
       workingParams = { ...workingParams, [key]: value };
       if (opts.rerender !== false) {
@@ -191,7 +320,7 @@ function renderEditor() {
 // ---------------------------------------------------------------------------
 
 function openSettings() {
-  renderSettingsTemplateList();
+  renderSettingsPresetList();
   if (typeof settingsModal.showModal === 'function') {
     settingsModal.showModal();
   } else {
@@ -208,46 +337,46 @@ function closeSettings() {
 }
 
 /**
- * Render the template management list inside the settings modal.
+ * Render the preset management list inside the settings modal.
  * Each row supports HTML5 drag-and-drop for reordering and a delete button.
  */
-function renderSettingsTemplateList() {
-  settingsTemplateList.innerHTML = '';
+function renderSettingsPresetList() {
+  settingsPresetList.innerHTML = '';
 
-  if (templateList.length === 0) {
+  if (presetList.length === 0) {
     const empty = document.createElement('li');
-    empty.classList.add('template-list__empty');
-    empty.textContent = '保存されたテンプレートはありません。右ペインで作成できます。';
-    settingsTemplateList.appendChild(empty);
+    empty.classList.add('preset-list__empty');
+    empty.textContent = '保存されたプリセットはありません。右ペインで作成できます。';
+    settingsPresetList.appendChild(empty);
     return;
   }
 
-  for (const t of templateList) {
-    settingsTemplateList.appendChild(buildTemplateListItem(t));
+  for (const t of presetList) {
+    settingsPresetList.appendChild(buildPresetListItem(t));
   }
 }
 
-function buildTemplateListItem(template) {
+function buildPresetListItem(preset) {
   const li = document.createElement('li');
-  li.classList.add('template-list__item');
+  li.classList.add('preset-list__item');
   li.draggable = true;
-  li.dataset.id = template.id;
+  li.dataset.id = preset.id;
 
   const handle = document.createElement('span');
-  handle.classList.add('template-list__handle');
+  handle.classList.add('preset-list__handle');
   handle.textContent = '≡';
   handle.setAttribute('aria-hidden', 'true');
 
   const name = document.createElement('span');
-  name.classList.add('template-list__name');
-  name.textContent = template.name;
-  name.title = template.name;
+  name.classList.add('preset-list__name');
+  name.textContent = preset.name;
+  name.title = preset.name;
 
   const del = document.createElement('button');
   del.type = 'button';
-  del.classList.add('template-list__delete', 'btn', 'btn-danger');
+  del.classList.add('preset-list__delete', 'btn', 'btn-danger');
   del.textContent = '削除';
-  del.addEventListener('click', () => deleteTemplateFromSettings(template.id));
+  del.addEventListener('click', () => deletePresetFromSettings(preset.id));
 
   li.appendChild(handle);
   li.appendChild(name);
@@ -257,21 +386,21 @@ function buildTemplateListItem(template) {
   return li;
 }
 
-async function deleteTemplateFromSettings(id) {
-  const target = templateList.find((t) => t.id === id);
+async function deletePresetFromSettings(id) {
+  const target = presetList.find((t) => t.id === id);
   if (!target) return;
-  if (!await window.app.confirm(`テンプレート「${target.name}」を削除しますか？`)) return;
+  if (!await window.app.confirm(`プリセット「${target.name}」を削除しますか？`)) return;
 
-  await window.templates.delete(id);
+  await window.presets.delete(id);
 
-  // Drop selection if the active template was deleted; the user is then
+  // Drop selection if the active preset was deleted; the user is then
   // editing free-form params again.
-  if (activeTemplateId === id) {
-    activeTemplateId = null;
+  if (activePresetId === id) {
+    activePresetId = null;
   }
 
-  await loadTemplates();
-  renderSettingsTemplateList();
+  await loadPresets();
+  renderSettingsPresetList();
 }
 
 // Drag-and-drop reordering ---------------------------------------------------
@@ -281,7 +410,7 @@ let dragSourceId = null;
 function attachDragHandlers(li) {
   li.addEventListener('dragstart', (e) => {
     dragSourceId = li.dataset.id;
-    li.classList.add('template-list__item--dragging');
+    li.classList.add('preset-list__item--dragging');
     // Required in Firefox to actually start a drag.
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
@@ -291,12 +420,12 @@ function attachDragHandlers(li) {
 
   li.addEventListener('dragend', () => {
     dragSourceId = null;
-    li.classList.remove('template-list__item--dragging');
-    settingsTemplateList
-      .querySelectorAll('.template-list__item--drop-before, .template-list__item--drop-after')
+    li.classList.remove('preset-list__item--dragging');
+    settingsPresetList
+      .querySelectorAll('.preset-list__item--drop-before, .preset-list__item--drop-after')
       .forEach((el) => {
-        el.classList.remove('template-list__item--drop-before');
-        el.classList.remove('template-list__item--drop-after');
+        el.classList.remove('preset-list__item--drop-before');
+        el.classList.remove('preset-list__item--drop-after');
       });
   });
 
@@ -306,13 +435,13 @@ function attachDragHandlers(li) {
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     const rect = li.getBoundingClientRect();
     const before = e.clientY < rect.top + rect.height / 2;
-    li.classList.toggle('template-list__item--drop-before', before);
-    li.classList.toggle('template-list__item--drop-after', !before);
+    li.classList.toggle('preset-list__item--drop-before', before);
+    li.classList.toggle('preset-list__item--drop-after', !before);
   });
 
   li.addEventListener('dragleave', () => {
-    li.classList.remove('template-list__item--drop-before');
-    li.classList.remove('template-list__item--drop-after');
+    li.classList.remove('preset-list__item--drop-before');
+    li.classList.remove('preset-list__item--drop-after');
   });
 
   li.addEventListener('drop', async (e) => {
@@ -320,21 +449,21 @@ function attachDragHandlers(li) {
     if (!dragSourceId || dragSourceId === li.dataset.id) return;
     const rect = li.getBoundingClientRect();
     const before = e.clientY < rect.top + rect.height / 2;
-    await reorderTemplates(dragSourceId, li.dataset.id, before);
+    await reorderPresets(dragSourceId, li.dataset.id, before);
   });
 }
 
-async function reorderTemplates(sourceId, targetId, insertBefore) {
-  const ids = templateList.map((t) => t.id);
+async function reorderPresets(sourceId, targetId, insertBefore) {
+  const ids = presetList.map((t) => t.id);
   const filtered = ids.filter((id) => id !== sourceId);
   const targetIdx = filtered.indexOf(targetId);
   if (targetIdx === -1) return;
   const insertAt = insertBefore ? targetIdx : targetIdx + 1;
   filtered.splice(insertAt, 0, sourceId);
 
-  await window.templates.reorder(filtered);
-  await loadTemplates();
-  renderSettingsTemplateList();
+  await window.presets.reorder(filtered);
+  await loadPresets();
+  renderSettingsPresetList();
 }
 
 // ---------------------------------------------------------------------------
@@ -405,8 +534,11 @@ async function loadSession(id) {
   messagesEl.innerHTML = '';
   for (const m of messages) {
     const el = appendMessage(m.role, m.content);
-    if (m.role === 'assistant' && m.paramsSnapshot) {
-      attachParamsSnapshotButton(el, m.paramsSnapshot);
+    if (m.role === 'user') {
+      attachUserEditButton(el, m);
+    }
+    if (m.role === 'assistant') {
+      attachAssistantButtons(el, m.paramsSnapshot || null);
     }
   }
 
@@ -443,7 +575,7 @@ function deriveTitle(text) {
 async function ensureSession(firstUserText) {
   if (activeSessionId) return activeSessionId;
   const session = await window.sessions.create({
-    templateId: activeTemplateId,
+    presetId: activePresetId,
     title: deriveTitle(firstUserText),
   });
   activeSessionId = session.id;
@@ -465,49 +597,236 @@ function appendMessage(role, initialText) {
 
   const content = document.createElement('div');
   content.classList.add('message__content');
-  content.textContent = initialText;
+  content.dataset.raw = initialText;
+  content.innerHTML = renderMarkdown(initialText);
 
   wrapper.appendChild(labelEl);
   wrapper.appendChild(content);
   messagesEl.appendChild(wrapper);
-  scrollToBottom();
   return wrapper; // return the whole wrapper so callers can attach extras
 }
 
-/**
- * Attach a small "ⓘ" button to an assistant message wrapper that, when
- * clicked, toggles a popover showing which params were used to generate it.
- */
-function attachParamsSnapshotButton(wrapper, snapshot) {
-  // Avoid duplicate buttons if called twice.
-  if (wrapper.querySelector('.message__settings-btn')) return;
+function getChatRequestParams() {
+  const { model, system, options } = window.Params.splitParamsForChat(workingParams);
+  if (!model) {
+    setStatus('右ペインでモデルを選択してください', 'warn');
+    return null;
+  }
+  return { model, system, options };
+}
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.classList.add('message__settings-btn');
-  btn.textContent = 'ⓘ';
-  btn.title = 'この応答に使用した設定';
-  btn.setAttribute('aria-label', 'この応答に使用した設定を表示');
+function setMessageContent(contentEl, text) {
+  contentEl.dataset.raw = text;
+  contentEl.innerHTML = renderMarkdown(text);
+}
 
-  const popover = document.createElement('div');
-  popover.classList.add('params-popover');
-  popover.hidden = true;
-  popover.appendChild(buildSnapshotTable(snapshot));
+function attachUserEditButton(wrapper, userMsg) {
+  if (wrapper.querySelector('.message__edit-btn')) return;
 
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    popover.hidden = !popover.hidden;
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.classList.add('message__edit-btn');
+  editBtn.textContent = '✎';
+  editBtn.title = 'プロンプトを編集';
+  editBtn.setAttribute('aria-label', 'プロンプトを編集');
+  editBtn.addEventListener('click', () => {
+    openUserPromptEdit(wrapper, userMsg);
   });
+  wrapper.appendChild(editBtn);
+}
 
-  // Click outside closes it.
-  document.addEventListener('click', (e) => {
-    if (!popover.contains(e.target) && e.target !== btn) {
-      popover.hidden = true;
+function closeActivePromptEdit() {
+  if (!activePromptEdit) return;
+  const { wrapper, userMsg, originalText } = activePromptEdit;
+  const contentEl = wrapper.querySelector('.message__content');
+  if (contentEl) setMessageContent(contentEl, userMsg?.content ?? originalText);
+  wrapper.classList.remove('message--editing');
+  activePromptEdit = null;
+}
+
+function openUserPromptEdit(wrapper, userMsg) {
+  if (activePromptEdit && activePromptEdit.wrapper !== wrapper) {
+    closeActivePromptEdit();
+  }
+
+  const contentEl = wrapper.querySelector('.message__content');
+  if (!contentEl) return;
+  const originalText = userMsg.content || '';
+
+  wrapper.classList.add('message--editing');
+  contentEl.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.classList.add('message__edit-form');
+
+  const textarea = document.createElement('textarea');
+  textarea.classList.add('message__edit-input');
+  textarea.value = originalText;
+  textarea.setAttribute('aria-label', 'プロンプト編集');
+
+  const actions = document.createElement('div');
+  actions.classList.add('message__edit-actions');
+
+  const doneBtn = document.createElement('button');
+  doneBtn.type = 'button';
+  doneBtn.classList.add('message__edit-action', 'message__edit-action--done');
+  doneBtn.textContent = '再送';
+  doneBtn.title = '完了';
+  doneBtn.setAttribute('aria-label', '編集を完了');
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.classList.add('message__edit-action', 'message__edit-action--cancel');
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.title = 'キャンセル';
+  cancelBtn.setAttribute('aria-label', '編集をキャンセル');
+
+  actions.appendChild(doneBtn);
+  actions.appendChild(cancelBtn);
+  form.appendChild(textarea);
+  form.appendChild(actions);
+  contentEl.appendChild(form);
+
+  activePromptEdit = { wrapper, userMsg, originalText };
+
+  const finishEdit = () => {
+    closeActivePromptEdit();
+  };
+
+  cancelBtn.addEventListener('click', finishEdit);
+
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      finishEdit();
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      doneBtn.click();
     }
   });
 
-  wrapper.appendChild(btn);
-  wrapper.appendChild(popover);
+  doneBtn.addEventListener('click', async () => {
+    const nextText = textarea.value.trim();
+    if (!nextText) {
+      setStatus('プロンプトは空にできません', 'warn');
+      textarea.focus();
+      return;
+    }
+    if (nextText === originalText) {
+      finishEdit();
+      return;
+    }
+    await applyPromptEdit(userMsg, wrapper, nextText);
+    finishEdit();
+  });
+
+  textarea.focus();
+  textarea.selectionStart = textarea.value.length;
+  textarea.selectionEnd = textarea.value.length;
+}
+
+async function cancelActiveGenerationForEdit() {
+  if (!activeGeneration || currentRequestId === null) return;
+  activeGeneration.discardAssistantBubble = true;
+  activeGeneration.suppressCancelledStatus = true;
+  window.ollama.cancel(currentRequestId);
+  await activeGeneration.finished;
+}
+
+async function applyPromptEdit(userMsg, wrapper, nextText) {
+  const userIdx = messages.indexOf(userMsg);
+  if (userIdx === -1 || !activeSessionId) return;
+
+  await cancelActiveGenerationForEdit();
+
+  const previousText = userMsg.content;
+  const previousMessages = messages;
+  const truncatedMessages = previousMessages.slice(0, userIdx + 1);
+
+  userMsg.content = nextText;
+  messages = truncatedMessages;
+
+  try {
+    const saved = await window.sessions.update(activeSessionId, { messages });
+    if (!saved) throw new Error('セッションへの保存に失敗しました');
+  } catch (err) {
+    userMsg.content = previousText;
+    messages = previousMessages;
+    const errorMessage = err instanceof Error
+      ? (err.message || '不明なエラー')
+      : (String(err) || '不明なエラー');
+    setStatus(`セッション保存エラー: ${errorMessage}`, 'error');
+    return;
+  }
+
+  const contentEl = wrapper.querySelector('.message__content');
+  if (contentEl) setMessageContent(contentEl, nextText);
+
+  let node = wrapper.nextElementSibling;
+  while (node) {
+    const next = node.nextElementSibling;
+    node.remove();
+    node = next;
+  }
+
+  const chatParams = getChatRequestParams();
+  if (!chatParams) return;
+  const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
+  await startAssistantGeneration({
+    sessionId: activeSessionId,
+    ...chatParams,
+    paramsSnapshot,
+  });
+}
+
+/**
+ * Attach a copy button and optional "ⓘ" params button to an assistant message.
+ * The popover hover is scoped to the info wrapper only, so the copy button
+ * does not accidentally trigger it.
+ */
+function attachAssistantButtons(wrapper, snapshot) {
+  if (wrapper.querySelector('.message__settings-container')) return;
+
+  const container = document.createElement('div');
+  container.classList.add('message__settings-container');
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.classList.add('message__copy-btn');
+  copyBtn.textContent = '⧉';
+  copyBtn.title = '応答をコピー';
+  copyBtn.setAttribute('aria-label', '応答をコピー');
+  copyBtn.addEventListener('click', () => {
+    const contentEl = wrapper.querySelector('.message__content');
+    const text = contentEl.dataset.raw || contentEl.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      copyBtn.textContent = '✓';
+      setTimeout(() => { copyBtn.textContent = '⧉'; }, 1500);
+    });
+  });
+  container.appendChild(copyBtn);
+
+  if (snapshot) {
+    const infoWrapper = document.createElement('div');
+    infoWrapper.classList.add('message__info-wrapper');
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.classList.add('message__settings-btn');
+    btn.textContent = 'ⓘ';
+    btn.title = 'この応答に使用した設定';
+    btn.setAttribute('aria-label', 'この応答に使用した設定を表示');
+
+    const popover = document.createElement('div');
+    popover.classList.add('params-popover');
+    popover.appendChild(buildSnapshotTable(snapshot));
+
+    infoWrapper.appendChild(btn);
+    infoWrapper.appendChild(popover);
+    container.appendChild(infoWrapper);
+  }
+
+  wrapper.appendChild(container);
 }
 
 function buildSnapshotTable(snapshot) {
@@ -540,9 +859,6 @@ function buildSnapshotTable(snapshot) {
   return table;
 }
 
-function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
 
 // ---------------------------------------------------------------------------
 // Send / receive
@@ -554,24 +870,125 @@ function updateSendButton() {
   sendBtn.disabled = !hasText || !hasModel || isGenerating;
 }
 
+async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot }) {
+  const assistantWrapper = appendMessage('assistant', '');
+  const assistantContent = assistantWrapper.querySelector('.message__content');
+  isGenerating = true;
+  sendBtn.disabled = true;
+  cancelBtn.style.display = '';
+  setStatus('生成中…');
+
+  const requestId = String(++requestCounter);
+  currentRequestId = requestId;
+  let responseText = '';
+  let done = false;
+  let finishCalled = false;
+  let finishResolve;
+  const finished = new Promise((resolve) => { finishResolve = resolve; });
+
+  const generation = {
+    requestId,
+    assistantWrapper,
+    discardAssistantBubble: false,
+    suppressCancelledStatus: false,
+    finished,
+  };
+  activeGeneration = generation;
+
+  const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
+    if (rid !== requestId) return;
+    if (content) {
+      responseText += content;
+      assistantContent.dataset.raw = responseText;
+      assistantContent.innerHTML = renderMarkdown(responseText);
+    }
+    if (isDone) {
+      done = true;
+      finish();
+    }
+  });
+
+  const unsubError = window.ollama.onChatError(({ requestId: rid, error, cancelled }) => {
+    if (rid !== requestId) return;
+    if (cancelled) {
+      // Voluntary cancel: keep partial text unless this request is being
+      // explicitly discarded by prompt editing.
+      if (!generation.discardAssistantBubble && !responseText) {
+        assistantContent.textContent = '[キャンセル]';
+        assistantContent.classList.add('message__content--error');
+      }
+      if (!generation.suppressCancelledStatus) {
+        setStatus('生成をキャンセルしました', 'warn');
+      }
+    } else {
+      assistantContent.textContent = `[エラー: ${error}]`;
+      assistantContent.classList.add('message__content--error');
+      setStatus(`エラー: ${error}`, 'error');
+    }
+    finish();
+  });
+
+  async function finish() {
+    if (finishCalled) return;
+    finishCalled = true;
+    unsubChunk();
+    unsubError();
+    isGenerating = false;
+    currentRequestId = null;
+    cancelBtn.style.display = 'none';
+    if (activeGeneration === generation) activeGeneration = null;
+
+    if (generation.discardAssistantBubble) {
+      generation.assistantWrapper.remove();
+    }
+
+    if (!generation.discardAssistantBubble && done && responseText) {
+      const assistantMsg = {
+        role: 'assistant',
+        content: responseText,
+        paramsSnapshot,
+      };
+      messages.push(assistantMsg);
+      attachAssistantButtons(assistantWrapper, paramsSnapshot);
+      try {
+        await window.sessions.appendMessage(sessionId, assistantMsg);
+        await loadSessions();
+        setStatus('');
+      } catch {
+        setStatus('応答の保存に失敗しました（表示は正常です）', 'warn');
+      }
+    }
+    updateSendButton();
+    finishResolve();
+  }
+
+  window.ollama.chat(requestId, {
+    model,
+    messages: messagesForRequest(),
+    system,
+    options,
+  });
+}
+
 async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || isGenerating) return;
 
-  const { model, system, options } = window.Params.splitParamsForChat(workingParams);
-  if (!model) {
-    setStatus('右ペインでモデルを選択してください', 'warn');
-    return;
-  }
+  const chatParams = getChatRequestParams();
+  if (!chatParams) return;
 
   // Snapshot the params at the moment generation starts, so edits made during
   // the response don't leak into this assistant turn's audit trail.
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
 
-  // Render user message + persist
+  // Render user message
   const userMsg = { role: 'user', content: text };
   messages.push(userMsg);
   const userMsgEl = appendMessage('user', text);
+  attachUserEditButton(userMsgEl, userMsg);
+  const elRect = userMsgEl.getBoundingClientRect();
+  const containerRect = messagesEl.getBoundingClientRect();
+  messagesEl.scrollTo({ top: messagesEl.scrollTop + elRect.top - containerRect.top, behavior: 'smooth' });
   messageInput.value = '';
   updateSendButton();
 
@@ -592,63 +1009,10 @@ async function sendMessage() {
     return;
   }
 
-  // Prepare assistant bubble
-  const assistantWrapper = appendMessage('assistant', '');
-  const assistantContent = assistantWrapper.querySelector('.message__content');
-  isGenerating = true;
-  sendBtn.disabled = true;
-  setStatus('生成中…');
-
-  const requestId = String(++requestCounter);
-  let responseText = '';
-  let done = false;
-
-  const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
-    if (rid !== requestId) return;
-    if (content) {
-      responseText += content;
-      assistantContent.textContent = responseText;
-      scrollToBottom();
-    }
-    if (isDone) {
-      done = true;
-      finish();
-    }
-  });
-
-  const unsubError = window.ollama.onChatError(({ requestId: rid, error }) => {
-    if (rid !== requestId) return;
-    assistantContent.textContent = `[エラー: ${error}]`;
-    assistantContent.classList.add('message__content--error');
-    setStatus(`エラー: ${error}`, 'error');
-    finish();
-  });
-
-  async function finish() {
-    unsubChunk();
-    unsubError();
-    isGenerating = false;
-    if (done && responseText) {
-      const assistantMsg = {
-        role: 'assistant',
-        content: responseText,
-        paramsSnapshot,
-      };
-      messages.push(assistantMsg);
-      attachParamsSnapshotButton(assistantWrapper, paramsSnapshot);
-      await window.sessions.appendMessage(sessionId, assistantMsg);
-      // Refresh the session list so updatedAt-driven order changes if any.
-      await loadSessions();
-      setStatus('');
-    }
-    updateSendButton();
-  }
-
-  window.ollama.chat(requestId, {
-    model,
-    messages: messagesForRequest(),
-    system,
-    options,
+  await startAssistantGeneration({
+    sessionId,
+    ...chatParams,
+    paramsSnapshot,
   });
 }
 
@@ -658,6 +1022,7 @@ async function sendMessage() {
 
 function startNewChat() {
   if (isGenerating) return;
+  closeActivePromptEdit();
   activeSessionId = null;
   messages = [];
   messagesEl.innerHTML = '';
@@ -667,10 +1032,42 @@ function startNewChat() {
 }
 
 // ---------------------------------------------------------------------------
+// Pane collapse
+// ---------------------------------------------------------------------------
+
+const PANE_STATE_KEY = 'paneCollapsed';
+
+function applyPaneState(state) {
+  const leftCollapsed = !!state.left;
+  const rightCollapsed = !!state.right;
+  appEl.classList.toggle('left-collapsed', leftCollapsed);
+  appEl.classList.toggle('right-collapsed', rightCollapsed);
+  leftPaneEl.classList.toggle('collapsed', leftCollapsed);
+  rightPaneEl.classList.toggle('collapsed', rightCollapsed);
+  leftPaneToggle.textContent = leftCollapsed ? '▶' : '◀';
+  leftPaneToggle.setAttribute('aria-label', leftCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+  leftPaneToggle.setAttribute('title', leftCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+  rightPaneToggle.textContent = rightCollapsed ? '◀' : '▶';
+  rightPaneToggle.setAttribute('aria-label', rightCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+  rightPaneToggle.setAttribute('title', rightCollapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ');
+}
+
+function togglePane(side) {
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem(PANE_STATE_KEY) || '{}'); } catch (_) {}
+  state[side] = !state[side];
+  try { localStorage.setItem(PANE_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+  applyPaneState(state);
+}
+
+// ---------------------------------------------------------------------------
 // Event listeners
 // ---------------------------------------------------------------------------
 
 newSessionBtn.addEventListener('click', startNewChat);
+
+leftPaneToggle.addEventListener('click', () => togglePane('left'));
+rightPaneToggle.addEventListener('click', () => togglePane('right'));
 
 settingsBtn.addEventListener('click', openSettings);
 settingsCloseBtn.addEventListener('click', closeSettings);
@@ -679,9 +1076,15 @@ settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettings();
 });
 
-templateSelect.addEventListener('change', () => selectTemplate(templateSelect.value));
-saveTemplateBtn.addEventListener('click', saveTemplateOverwrite);
-newTemplateBtn.addEventListener('click', saveTemplateAsNew);
+presetSelect.addEventListener('change', () => selectPreset(presetSelect.value));
+savePresetBtn.addEventListener('click', savePresetOverwrite);
+newPresetBtn.addEventListener('click', savePresetAsNew);
+
+cancelBtn.addEventListener('click', () => {
+  if (currentRequestId !== null) {
+    window.ollama.cancel(currentRequestId);
+  }
+});
 
 messageInput.addEventListener('input', updateSendButton);
 
@@ -702,7 +1105,15 @@ inputForm.addEventListener('submit', (e) => {
 // ---------------------------------------------------------------------------
 
 (async function init() {
+  // Initialize markdown rendering
+  configureMarked();
+
+  // Restore pane collapse state
+  let paneState = {};
+  try { paneState = JSON.parse(localStorage.getItem(PANE_STATE_KEY) || '{}'); } catch (_) {}
+  applyPaneState(paneState);
+
   renderEditor();
-  await Promise.all([loadModels(), loadTemplates(), loadSessions()]);
+  await Promise.all([loadModels(), loadPresets(), loadSessions()]);
   messageInput.focus();
 })();

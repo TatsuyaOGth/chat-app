@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('ollama', {
     ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options }),
 
   /**
+   * Cancel an in-progress streaming request by its requestId.
+   * The renderer will receive an `onChatError` callback with `cancelled: true`.
+   */
+  cancel: (requestId) => ipcRenderer.send('ollama:chat:cancel', { requestId }),
+
+  /**
    * Register a listener for streaming response chunks.
    * The callback receives `{ requestId, content, done }`.
    * @returns {function} Unsubscribe function.
@@ -58,13 +64,13 @@ contextBridge.exposeInMainWorld('app', {
   confirm: (message) => ipcRenderer.invoke('dialog:confirm', message),
 });
 
-contextBridge.exposeInMainWorld('templates', {
-  list: () => ipcRenderer.invoke('templates:list'),
-  get: (id) => ipcRenderer.invoke('templates:get', id),
-  create: (data) => ipcRenderer.invoke('templates:create', data),
-  update: (id, patch) => ipcRenderer.invoke('templates:update', id, patch),
-  delete: (id) => ipcRenderer.invoke('templates:delete', id),
-  reorder: (orderedIds) => ipcRenderer.invoke('templates:reorder', orderedIds),
+contextBridge.exposeInMainWorld('presets', {
+  list: () => ipcRenderer.invoke('presets:list'),
+  get: (id) => ipcRenderer.invoke('presets:get', id),
+  create: (data) => ipcRenderer.invoke('presets:create', data),
+  update: (id, patch) => ipcRenderer.invoke('presets:update', id, patch),
+  delete: (id) => ipcRenderer.invoke('presets:delete', id),
+  reorder: (orderedIds) => ipcRenderer.invoke('presets:reorder', orderedIds),
 });
 
 contextBridge.exposeInMainWorld('sessions', {
