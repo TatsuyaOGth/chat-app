@@ -1,5 +1,8 @@
 'use strict';
 
+const { createGenerationLifecycle } = require('./generation-lifecycle');
+const { subscribeGenerationRouting } = require('./request-routing');
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -903,22 +906,10 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
   // Thinking indicator — shown until first content chunk arrives.
   const thinkingEl = createThinkingIndicator();
   assistantContent.appendChild(thinkingEl);
-  let thinkingRemoved = false;
 
   // Async: determine whether the model is already loaded and update label.
-  window.ollama.checkLoaded(model).then(({ loaded }) => {
-    if (thinkingRemoved) return;
-    const labelEl = thinkingEl.querySelector('.thinking-indicator__label');
-    if (labelEl) {
-      labelEl.textContent = loaded ? '考え中...' : 'モデルをロード中...';
-    }
-  }).catch(() => { /* ignore; label stays at default */ });
-
   const requestId = String(++requestCounter);
   currentRequestId = requestId;
-  let responseText = '';
-  let done = false;
-  let finishCalled = false;
   let finishResolve;
   const finished = new Promise((resolve) => { finishResolve = resolve; });
 
@@ -931,80 +922,82 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
   };
   activeGeneration = generation;
 
-  const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
-    if (rid !== requestId) return;
-    if (content) {
-      if (!thinkingRemoved) {
-        thinkingEl.remove();
-        thinkingRemoved = true;
-      }
-      responseText += content;
-      assistantContent.dataset.raw = responseText;
-      assistantContent.innerHTML = renderMarkdown(responseText);
-    }
-    if (isDone) {
-      done = true;
-      finish();
-    }
+  let lifecycle;
+  const routing = subscribeGenerationRouting({
+    ollama: window.ollama,
+    requestId,
+    onChunk: (data) => lifecycle.handleChunk(data),
+    onError: (data) => lifecycle.handleError(data),
   });
 
-  const unsubError = window.ollama.onChatError(({ requestId: rid, error, cancelled }) => {
-    if (rid !== requestId) return;
-    if (!thinkingRemoved) {
+  lifecycle = createGenerationLifecycle({
+    requestId,
+    generation,
+    paramsSnapshot,
+    sessionId,
+    clearUiState: (active) => {
+      isGenerating = false;
+      currentRequestId = null;
+      cancelBtn.style.display = 'none';
+      if (activeGeneration === active) activeGeneration = null;
+    },
+    onRemoveThinking: () => {
       thinkingEl.remove();
-      thinkingRemoved = true;
-    }
-    if (cancelled) {
-      // Voluntary cancel: keep partial text unless this request is being
-      // explicitly discarded by prompt editing.
-      if (!generation.discardAssistantBubble && !responseText) {
+    },
+    onAppendContent: (responseText) => {
+      assistantContent.dataset.raw = responseText;
+      assistantContent.innerHTML = renderMarkdown(responseText);
+    },
+    onCancelled: ({ generation: currentGeneration, responseText }) => {
+      if (!currentGeneration.discardAssistantBubble && !responseText) {
         assistantContent.textContent = '[キャンセル]';
         assistantContent.classList.add('message__content--error');
       }
-      if (!generation.suppressCancelledStatus) {
+      if (!currentGeneration.suppressCancelledStatus) {
         setStatus('生成をキャンセルしました', 'warn');
       }
-    } else {
+    },
+    onError: (error) => {
       assistantContent.textContent = `[エラー: ${error}]`;
       assistantContent.classList.add('message__content--error');
       setStatus(`エラー: ${error}`, 'error');
-    }
-    finish();
-  });
-
-  async function finish() {
-    if (finishCalled) return;
-    finishCalled = true;
-    unsubChunk();
-    unsubError();
-    isGenerating = false;
-    currentRequestId = null;
-    cancelBtn.style.display = 'none';
-    if (activeGeneration === generation) activeGeneration = null;
-
-    if (generation.discardAssistantBubble) {
-      generation.assistantWrapper.remove();
-    }
-
-    if (!generation.discardAssistantBubble && done && responseText) {
+    },
+    onPersistAssistant: async ({ sessionId: currentSessionId, paramsSnapshot: currentParamsSnapshot, responseText }) => {
       const assistantMsg = {
         role: 'assistant',
         content: responseText,
-        paramsSnapshot,
+        paramsSnapshot: currentParamsSnapshot,
       };
       messages.push(assistantMsg);
-      attachAssistantButtons(assistantWrapper, paramsSnapshot);
+      attachAssistantButtons(assistantWrapper, currentParamsSnapshot);
       try {
-        await window.sessions.appendMessage(sessionId, assistantMsg);
+        await window.sessions.appendMessage(currentSessionId, assistantMsg);
         await loadSessions();
         setStatus('');
       } catch {
         setStatus('応答の保存に失敗しました（表示は正常です）', 'warn');
       }
+    },
+    onDiscardAssistant: (active) => {
+      active.assistantWrapper.remove();
+    },
+    onAfterFinish: () => {
+      updateSendButton();
+    },
+    onFinishResolved: () => {
+      finishResolve();
+    },
+    unsubChunk: routing.unsubChunk,
+    unsubError: routing.unsubError,
+  });
+
+  window.ollama.checkLoaded(model).then(({ loaded }) => {
+    const label = lifecycle.updateThinkingLabel(loaded);
+    if (label) {
+      const labelEl = thinkingEl.querySelector('.thinking-indicator__label');
+      if (labelEl) labelEl.textContent = label;
     }
-    updateSendButton();
-    finishResolve();
-  }
+  }).catch(() => { /* ignore; label stays at default */ });
 
   window.ollama.chat(requestId, {
     model,
