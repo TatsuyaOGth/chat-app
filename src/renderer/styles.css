@@ -409,6 +409,44 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────────
+   Thinking / loading indicator
+   ───────────────────────────────────────────────────────────────── */
+
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-style: italic;
+  padding: 2px 0;
+}
+
+.thinking-indicator__dots {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.thinking-indicator__dots span {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  animation: thinking-bounce 1.2s ease-in-out infinite;
+}
+
+.thinking-indicator__dots span:nth-child(1) { animation-delay: 0s; }
+.thinking-indicator__dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-indicator__dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes thinking-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30%            { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────────
    Markdown Styles (inside .message__content)
    ───────────────────────────────────────────────────────────────── */
 

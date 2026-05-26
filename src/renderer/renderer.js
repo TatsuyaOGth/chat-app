@@ -587,6 +587,28 @@ async function ensureSession(firstUserText) {
 // Chat rendering
 // ---------------------------------------------------------------------------
 
+/**
+ * Create the "thinking / loading" indicator shown while waiting for the
+ * first token.  The label defaults to「考え中...」and is updated to
+ * 「モデルをロード中...」once the /api/ps check resolves.
+ */
+function createThinkingIndicator() {
+  const el = document.createElement('div');
+  el.classList.add('thinking-indicator');
+
+  const label = document.createElement('span');
+  label.classList.add('thinking-indicator__label');
+  label.textContent = '考え中...';
+
+  const dots = document.createElement('span');
+  dots.classList.add('thinking-indicator__dots');
+  for (let i = 0; i < 3; i++) dots.appendChild(document.createElement('span'));
+
+  el.appendChild(dots);
+  el.appendChild(label);
+  return el;
+}
+
 function appendMessage(role, initialText) {
   const wrapper = document.createElement('div');
   wrapper.classList.add('message', `message--${role}`);
@@ -878,6 +900,20 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
   cancelBtn.style.display = '';
   setStatus('生成中…');
 
+  // Thinking indicator — shown until first content chunk arrives.
+  const thinkingEl = createThinkingIndicator();
+  assistantContent.appendChild(thinkingEl);
+  let thinkingRemoved = false;
+
+  // Async: determine whether the model is already loaded and update label.
+  window.ollama.checkLoaded(model).then(({ loaded }) => {
+    if (thinkingRemoved) return;
+    const labelEl = thinkingEl.querySelector('.thinking-indicator__label');
+    if (labelEl) {
+      labelEl.textContent = loaded ? '考え中...' : 'モデルをロード中...';
+    }
+  }).catch(() => { /* ignore; label stays at default */ });
+
   const requestId = String(++requestCounter);
   currentRequestId = requestId;
   let responseText = '';
@@ -898,6 +934,10 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
   const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
     if (rid !== requestId) return;
     if (content) {
+      if (!thinkingRemoved) {
+        thinkingEl.remove();
+        thinkingRemoved = true;
+      }
       responseText += content;
       assistantContent.dataset.raw = responseText;
       assistantContent.innerHTML = renderMarkdown(responseText);
@@ -910,6 +950,10 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
 
   const unsubError = window.ollama.onChatError(({ requestId: rid, error, cancelled }) => {
     if (rid !== requestId) return;
+    if (!thinkingRemoved) {
+      thinkingEl.remove();
+      thinkingRemoved = true;
+    }
     if (cancelled) {
       // Voluntary cancel: keep partial text unless this request is being
       // explicitly discarded by prompt editing.

@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('ollama', {
   getModels: () => ipcRenderer.invoke('ollama:get-models'),
 
   /**
+   * Check whether a model is currently loaded in Ollama (via /api/ps).
+   * @param {string} model  Model name to check.
+   * @returns {Promise<{ loaded: boolean }>}
+   */
+  checkLoaded: (model) => ipcRenderer.invoke('ollama:check-loaded', model),
+
+  /**
    * Send a chat request and receive the response as a stream.
    *
    * @param {string} requestId  Caller-generated unique ID for this request.

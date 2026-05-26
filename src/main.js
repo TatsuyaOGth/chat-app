@@ -2,233 +2,15 @@
 
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
-const http = require('node:http');
 
 const storage = require('./storage');
+const { ollamaRequest, ollamaChatStream } = require('./ollama');
 
 // ---------------------------------------------------------------------------
 // Ollama configuration (local-only; no external network required)
 // ---------------------------------------------------------------------------
-const OLLAMA_HOST = 'localhost';
-const OLLAMA_PORT = 11434;
-const OLLAMA_REQUEST_TIMEOUT_MS = 10_000;
-
-/** ms of silence before an in-flight stream is declared timed-out. */
-const INACTIVITY_TIMEOUT_MS = 30_000;
-
 /** Map<requestId, abortFn> — lets the cancel IPC handler kill a live request. */
 const activeRequests = new Map();
-
-/** Low-level helper: issue an HTTP request to the local Ollama server. */
-function ollamaRequest(method, pathname, body) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const resolveOnce = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const rejectOnce = (error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
-
-    const payload = body ? JSON.stringify(body) : null;
-    const options = {
-      hostname: OLLAMA_HOST,
-      port: OLLAMA_PORT,
-      path: pathname,
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
-      },
-    };
-
-    const req = http.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        try {
-          resolveOnce(JSON.parse(data));
-        } catch {
-          resolveOnce(data);
-        }
-      });
-    });
-
-    req.setTimeout(OLLAMA_REQUEST_TIMEOUT_MS, () => {
-      req.destroy();
-      rejectOnce(new Error(`Ollama request timed out after ${OLLAMA_REQUEST_TIMEOUT_MS}ms`));
-    });
-    req.on('error', rejectOnce);
-    if (payload) req.write(payload);
-    req.end();
-  });
-}
-
-/**
- * Build the Ollama /api/chat request body.
- *
- * - `system` is injected as the first message with role "system" (Ollama's
- *   /api/chat does not accept a top-level `system` field — only /api/generate
- *   does — so we prepend it to the messages array instead).
- * - Any keys in `options` whose value is `null` or `undefined` are dropped so
- *   Ollama falls back to its defaults for those parameters.
- */
-function buildChatBody({ model, messages, system, options }) {
-  const finalMessages = system && system.trim()
-    ? [{ role: 'system', content: system }, ...messages]
-    : messages;
-
-  const cleanedOptions = {};
-  if (options && typeof options === 'object') {
-    for (const [key, value] of Object.entries(options)) {
-      if (value !== null && value !== undefined) cleanedOptions[key] = value;
-    }
-  }
-
-  const body = { model, messages: finalMessages, stream: true };
-  if (Object.keys(cleanedOptions).length > 0) body.options = cleanedOptions;
-  return body;
-}
-
-/**
- * Stream a chat request to Ollama.
- * Calls `onChunk(content)` for each token and `onDone()` when finished.
- * `requestId` is used to register an abort handle in `activeRequests`.
- */
-function ollamaChatStream({ requestId, model, messages, system, options }, onChunk, onDone, onError) {
-  const payload = JSON.stringify(buildChatBody({ model, messages, system, options }));
-  const reqOptions = {
-    hostname: OLLAMA_HOST,
-    port: OLLAMA_PORT,
-    path: '/api/chat',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(payload),
-    },
-  };
-
-  let finished = false;
-  let inactivityTimer = null;
-
-  function resetInactivityTimer() {
-    clearTimeout(inactivityTimer);
-    inactivityTimer = setTimeout(() => {
-      if (!finished) {
-        finished = true;
-        cleanup();
-        req.destroy();
-        onError(new Error('応答タイムアウト: サーバーからの応答が途絶えました'));
-      }
-    }, INACTIVITY_TIMEOUT_MS);
-  }
-
-  function cleanup() {
-    clearTimeout(inactivityTimer);
-    activeRequests.delete(requestId);
-  }
-
-  const req = http.request(reqOptions, (res) => {
-    // Non-200 → read body text then report as error; never call onDone.
-    if (res.statusCode !== 200) {
-      let errBody = '';
-      res.on('data', (c) => { errBody += c.toString('utf8'); });
-      res.on('end', () => {
-        if (finished) return;
-        finished = true;
-        cleanup();
-        let detail;
-        try {
-          const parsed = JSON.parse(errBody);
-          detail = parsed.error || parsed.message || errBody;
-        } catch {
-          detail = errBody || `HTTP ${res.statusCode}`;
-        }
-        onError(new Error(`HTTP ${res.statusCode}: ${detail}`));
-      });
-      return;
-    }
-
-    resetInactivityTimer();
-    let buffer = '';
-    let parseFailCount = 0;
-
-    res.on('data', (chunk) => {
-      resetInactivityTimer();
-      buffer += chunk.toString('utf8');
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed.message?.content) onChunk(parsed.message.content);
-          if (parsed.done && !finished) {
-            finished = true;
-            cleanup();
-            onDone();
-          }
-        } catch {
-          parseFailCount++;
-          if (parseFailCount <= 3 || parseFailCount % 20 === 0) {
-            console.warn(`[ollama:${requestId}] JSON parse failed (×${parseFailCount}):`, line.slice(0, 200));
-          }
-        }
-      }
-    });
-
-    res.on('end', () => {
-      // Flush remaining buffer
-      if (buffer.trim()) {
-        try {
-          const parsed = JSON.parse(buffer);
-          if (parsed.message?.content && !finished) onChunk(parsed.message.content);
-          if (parsed.done && !finished) {
-            finished = true;
-            cleanup();
-            onDone();
-            return;
-          }
-        } catch {
-          console.warn(`[ollama:${requestId}] JSON parse failed on final buffer:`, buffer.slice(0, 200));
-        }
-      }
-      // Stream closed without done:true → treat as normal completion.
-      if (!finished) {
-        finished = true;
-        cleanup();
-        onDone();
-      }
-    });
-  });
-
-  req.on('error', (err) => {
-    if (!finished) {
-      finished = true;
-      cleanup();
-      onError(err);
-    }
-  });
-
-  req.write(payload);
-  req.end();
-
-  // Register abort handle; returns true if the request was actually cancelled.
-  activeRequests.set(requestId, () => {
-    if (!finished) {
-      finished = true;
-      cleanup();
-      req.destroy();
-      return true;
-    }
-    return false;
-  });
-}
 
 // ---------------------------------------------------------------------------
 // IPC handlers — Ollama
@@ -241,6 +23,21 @@ ipcMain.handle('ollama:get-models', async () => {
     return { models: (result.models || []).map((m) => m.name) };
   } catch (err) {
     return { models: [], error: err.message };
+  }
+});
+
+/**
+ * Check whether a given model is currently loaded in Ollama's process list.
+ * Returns { loaded: boolean }.
+ */
+ipcMain.handle('ollama:check-loaded', async (_event, model) => {
+  try {
+    const result = await ollamaRequest('GET', '/api/ps', null);
+    const running = result.models || [];
+    const loaded = running.some((m) => m.name === model || m.model === model);
+    return { loaded };
+  } catch {
+    return { loaded: false };
   }
 });
 
@@ -264,6 +61,7 @@ ipcMain.on('ollama:chat', (event, payload) => {
     (content) => send('ollama:chat:chunk', { requestId, content, done: false }),
     () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
     (err) => send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' }),
+    { activeRequests },
   );
 });
 
