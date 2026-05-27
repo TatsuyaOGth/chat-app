@@ -1,5 +1,8 @@
 'use strict';
 
+const { createGenerationLifecycle } = window.GenerationLifecycle;
+const { subscribeGenerationRouting } = window.RequestRouting;
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -56,6 +59,8 @@ let activeSessionId = null;
 const messagesEl = document.getElementById('messages');
 const inputForm = document.getElementById('input-form');
 const messageInput = document.getElementById('message-input');
+const webSearchToggleWrap = document.getElementById('web-search-toggle-wrap');
+const webSearchToggle = document.getElementById('web-search-toggle');
 const sendBtn = document.getElementById('send-btn');
 const cancelBtn = document.getElementById('cancel-btn');
 const statusBar = document.getElementById('status-bar');
@@ -72,12 +77,20 @@ const presetNameInput = document.getElementById('preset-name-input');
 const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
 const settingsPresetList = document.getElementById('settings-preset-list');
+const tavilyApiKeyInput = document.getElementById('tavily-api-key-input');
+const tavilyApiKeySaveBtn = document.getElementById('tavily-api-key-save-btn');
+const tavilyApiKeyDeleteBtn = document.getElementById('tavily-api-key-delete-btn');
+const tavilyApiKeyStatus = document.getElementById('tavily-api-key-status');
 
 const appEl = document.getElementById('app');
 const leftPaneEl = document.getElementById('left-pane');
 const rightPaneEl = document.getElementById('right-pane');
 const leftPaneToggle = document.getElementById('left-pane-toggle');
 const rightPaneToggle = document.getElementById('right-pane-toggle');
+const leftDivider = document.getElementById('left-divider');
+const rightDivider = document.getElementById('right-divider');
+
+let isWebSearchAvailable = false;
 
 // ─────────────────────────────────────────────────────────────────
 // Markdown Configuration & Rendering
@@ -200,6 +213,16 @@ function setStatus(text, level = 'info') {
   statusBar.className = `status-bar status-bar--${level}`;
 }
 
+function setWebSearchAvailability(configured) {
+  isWebSearchAvailable = !!configured;
+  if (webSearchToggleWrap) {
+    webSearchToggleWrap.hidden = !isWebSearchAvailable;
+  }
+  if (!isWebSearchAvailable && webSearchToggle) {
+    webSearchToggle.checked = false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -319,8 +342,103 @@ function renderEditor() {
 // Settings modal
 // ---------------------------------------------------------------------------
 
+function setTavilyStatus(text, level = 'info') {
+  if (!tavilyApiKeyStatus) return;
+  tavilyApiKeyStatus.textContent = text;
+  tavilyApiKeyStatus.className = 'tavily-settings__status';
+  if (level === 'ok') tavilyApiKeyStatus.classList.add('tavily-settings__status--ok');
+  if (level === 'warn') tavilyApiKeyStatus.classList.add('tavily-settings__status--warn');
+  if (level === 'error') tavilyApiKeyStatus.classList.add('tavily-settings__status--error');
+}
+
+async function loadTavilyConfigStatus() {
+  if (!window.tavily || !tavilyApiKeyInput) {
+    setWebSearchAvailability(false);
+    return;
+  }
+  setTavilyStatus('読み込み中…');
+  try {
+    const { configured, source, error } = await window.tavily.getConfigStatus();
+    setWebSearchAvailability(configured);
+    if (error) {
+      setTavilyStatus(`状態取得エラー: ${error}`, 'error');
+      return;
+    }
+
+    if (!configured) {
+      tavilyApiKeyInput.value = '';
+      tavilyApiKeyInput.placeholder = 'tvly-...';
+      setTavilyStatus('未設定です', 'warn');
+      return;
+    }
+
+    tavilyApiKeyInput.value = '';
+    tavilyApiKeyInput.placeholder = source === 'env'
+      ? '環境変数で設定済み（TAVILY_API_KEY）'
+      : '保存済み（userData/tavily-config.json）';
+    setTavilyStatus(source === 'env' ? '環境変数で設定済みです' : '設定ファイルに保存済みです', 'ok');
+  } catch (err) {
+    setWebSearchAvailability(false);
+    setTavilyStatus(`状態取得エラー: ${err.message || String(err)}`, 'error');
+  }
+}
+
+async function saveTavilyApiKeyFromSettings() {
+  if (!window.tavily || !tavilyApiKeyInput) return;
+  const apiKey = tavilyApiKeyInput.value.trim();
+  if (!apiKey) {
+    setTavilyStatus('API Key を入力してください', 'warn');
+    tavilyApiKeyInput.focus();
+    return;
+  }
+
+  tavilyApiKeySaveBtn.disabled = true;
+  setTavilyStatus('保存中…');
+  try {
+    const { ok, error } = await window.tavily.saveApiKey(apiKey);
+    if (!ok) {
+      setTavilyStatus(`保存エラー: ${error || '不明なエラー'}`, 'error');
+      return;
+    }
+
+    tavilyApiKeyInput.value = '';
+    await loadTavilyConfigStatus();
+    setTavilyStatus('保存しました（userData/tavily-config.json）', 'ok');
+  } catch (err) {
+    setTavilyStatus(`保存エラー: ${err.message || String(err)}`, 'error');
+  } finally {
+    tavilyApiKeySaveBtn.disabled = false;
+  }
+}
+
+async function deleteTavilyApiKeyFromSettings() {
+  if (!window.tavily) return;
+
+  const confirmed = await window.app.confirm('保存済みの Tavily API Key を削除しますか？');
+  if (!confirmed) return;
+
+  tavilyApiKeyDeleteBtn.disabled = true;
+  setTavilyStatus('削除中…');
+  try {
+    const { ok, error } = await window.tavily.deleteApiKey();
+    if (!ok) {
+      setTavilyStatus(`削除エラー: ${error || '不明なエラー'}`, 'error');
+      return;
+    }
+
+    tavilyApiKeyInput.value = '';
+    await loadTavilyConfigStatus();
+    setTavilyStatus('保存済み API Key を削除しました', 'ok');
+  } catch (err) {
+    setTavilyStatus(`削除エラー: ${err.message || String(err)}`, 'error');
+  } finally {
+    tavilyApiKeyDeleteBtn.disabled = false;
+  }
+}
+
 function openSettings() {
   renderSettingsPresetList();
+  loadTavilyConfigStatus();
   if (typeof settingsModal.showModal === 'function') {
     settingsModal.showModal();
   } else {
@@ -587,6 +705,28 @@ async function ensureSession(firstUserText) {
 // Chat rendering
 // ---------------------------------------------------------------------------
 
+/**
+ * Create the "thinking / loading" indicator shown while waiting for the
+ * first token.  The label defaults to「考え中...」and is updated to
+ * 「モデルをロード中...」once the /api/ps check resolves.
+ */
+function createThinkingIndicator() {
+  const el = document.createElement('div');
+  el.classList.add('thinking-indicator');
+
+  const label = document.createElement('span');
+  label.classList.add('thinking-indicator__label');
+  label.textContent = '考え中...';
+
+  const dots = document.createElement('span');
+  dots.classList.add('thinking-indicator__dots');
+  for (let i = 0; i < 3; i++) dots.appendChild(document.createElement('span'));
+
+  el.appendChild(dots);
+  el.appendChild(label);
+  return el;
+}
+
 function appendMessage(role, initialText) {
   const wrapper = document.createElement('div');
   wrapper.classList.add('message', `message--${role}`);
@@ -604,6 +744,111 @@ function appendMessage(role, initialText) {
   wrapper.appendChild(content);
   messagesEl.appendChild(wrapper);
   return wrapper; // return the whole wrapper so callers can attach extras
+}
+
+/**
+ * Create or update the collapsible reasoning panel for a given assistant message.
+ * Called with each incremental thinking chunk; text is appended cumulatively.
+ * @param {HTMLElement} wrapper - The .message wrapper element.
+ * @param {string} thinkingChunk - New reasoning text to append.
+ */
+function upsertReasoningPanel(wrapper, thinkingChunk) {
+  if (!thinkingChunk) return;
+
+  let details = wrapper.querySelector('.reasoning-panel');
+  if (!details) {
+    details = document.createElement('details');
+    details.classList.add('reasoning-panel');
+
+    const summary = document.createElement('summary');
+    summary.classList.add('reasoning-panel__toggle');
+    summary.textContent = '🧠 推論過程';
+    details.appendChild(summary);
+
+    const content = document.createElement('pre');
+    content.classList.add('reasoning-panel__content');
+    details.appendChild(content);
+
+    // Insert before the message content so reasoning appears above the answer
+    const msgContent = wrapper.querySelector('.message__content');
+    if (msgContent) {
+      wrapper.insertBefore(details, msgContent);
+    } else {
+      wrapper.appendChild(details);
+    }
+  }
+
+  const contentEl = details.querySelector('.reasoning-panel__content');
+  if (contentEl) contentEl.textContent += thinkingChunk;
+}
+
+function upsertSearchInfoPanel(wrapper, payload) {  if (!payload) return;
+  const summaryText = typeof payload.summary === 'string' ? payload.summary.trim() : '';
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  if (!summaryText && results.length === 0) return;
+
+  let details = wrapper.querySelector('.search-info');
+  if (!details) {
+    details = document.createElement('details');
+    details.classList.add('search-info');
+
+    const summary = document.createElement('summary');
+    summary.classList.add('search-info__toggle');
+    summary.textContent = '検索結果と要約';
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.classList.add('search-info__body');
+    details.appendChild(body);
+
+    wrapper.appendChild(details);
+  }
+
+  const bodyEl = details.querySelector('.search-info__body');
+  if (!bodyEl) return;
+  bodyEl.innerHTML = '';
+
+  if (summaryText) {
+    const summaryHeading = document.createElement('p');
+    summaryHeading.classList.add('search-info__heading');
+    summaryHeading.textContent = '要約';
+    bodyEl.appendChild(summaryHeading);
+
+    const summaryContent = document.createElement('pre');
+    summaryContent.classList.add('search-info__summary');
+    summaryContent.textContent = summaryText;
+    bodyEl.appendChild(summaryContent);
+  }
+
+  if (results.length > 0) {
+    const listHeading = document.createElement('p');
+    listHeading.classList.add('search-info__heading');
+    listHeading.textContent = '検索結果';
+    bodyEl.appendChild(listHeading);
+
+    const list = document.createElement('ol');
+    list.classList.add('search-info__list');
+    for (const item of results) {
+      const li = document.createElement('li');
+      li.classList.add('search-info__item');
+
+      const title = document.createElement('a');
+      title.classList.add('search-info__link');
+      title.textContent = item.title || item.url || '(no title)';
+      title.href = item.url || '#';
+      title.target = '_blank';
+      title.rel = 'noreferrer noopener';
+
+      const snippet = document.createElement('p');
+      snippet.classList.add('search-info__snippet');
+      snippet.textContent = item.snippet || '(snippet unavailable)';
+
+      li.appendChild(title);
+      li.appendChild(snippet);
+      list.appendChild(li);
+    }
+    bodyEl.appendChild(list);
+  }
 }
 
 function getChatRequestParams() {
@@ -870,19 +1115,35 @@ function updateSendButton() {
   sendBtn.disabled = !hasText || !hasModel || isGenerating;
 }
 
-async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot }) {
+function statusTextForStage(stage, fallback) {
+  if (fallback && fallback.trim()) return fallback;
+  switch (stage) {
+    case 'search':
+      return 'ウェブ検索中…';
+    case 'summarize':
+      return '検索結果を要約中…';
+    case 'generating':
+      return '回答を生成中…';
+    default:
+      return '生成中…';
+  }
+}
+
+async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot, webSearchEnabled }) {
   const assistantWrapper = appendMessage('assistant', '');
   const assistantContent = assistantWrapper.querySelector('.message__content');
   isGenerating = true;
   sendBtn.disabled = true;
   cancelBtn.style.display = '';
-  setStatus('生成中…');
+  setStatus(webSearchEnabled ? 'ウェブ検索を開始中…' : '生成中…');
 
+  // Thinking indicator — shown until first content chunk arrives.
+  const thinkingEl = createThinkingIndicator();
+  assistantContent.appendChild(thinkingEl);
+
+  // Async: determine whether the model is already loaded and update label.
   const requestId = String(++requestCounter);
   currentRequestId = requestId;
-  let responseText = '';
-  let done = false;
-  let finishCalled = false;
   let finishResolve;
   const finished = new Promise((resolve) => { finishResolve = resolve; });
 
@@ -895,78 +1156,108 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
   };
   activeGeneration = generation;
 
-  const unsubChunk = window.ollama.onChatChunk(({ requestId: rid, content, done: isDone }) => {
-    if (rid !== requestId) return;
-    if (content) {
-      responseText += content;
-      assistantContent.dataset.raw = responseText;
-      assistantContent.innerHTML = renderMarkdown(responseText);
-    }
-    if (isDone) {
-      done = true;
-      finish();
-    }
+  let lifecycle;
+  const routing = subscribeGenerationRouting({
+    ollama: window.ollama,
+    requestId,
+    onChunk: (data) => lifecycle.handleChunk(data),
+    onError: (data) => lifecycle.handleError(data),
+    onProgress: (data) => {
+      setStatus(statusTextForStage(data.stage, data.message));
+      if (data.stage === 'generating') {
+        const label = lifecycle.updateThinkingLabel(true);
+        if (label) {
+          const labelEl = thinkingEl.querySelector('.thinking-indicator__label');
+          if (labelEl) labelEl.textContent = label;
+        }
+      }
+    },
+    onSearchInfo: (data) => {
+      upsertSearchInfoPanel(assistantWrapper, data);
+    },
+    onThinking: (data) => {
+      upsertReasoningPanel(assistantWrapper, data.thinking);
+    },
   });
 
-  const unsubError = window.ollama.onChatError(({ requestId: rid, error, cancelled }) => {
-    if (rid !== requestId) return;
-    if (cancelled) {
-      // Voluntary cancel: keep partial text unless this request is being
-      // explicitly discarded by prompt editing.
-      if (!generation.discardAssistantBubble && !responseText) {
+  lifecycle = createGenerationLifecycle({
+    requestId,
+    generation,
+    paramsSnapshot,
+    sessionId,
+    clearUiState: (active) => {
+      isGenerating = false;
+      currentRequestId = null;
+      cancelBtn.style.display = 'none';
+      if (activeGeneration === active) activeGeneration = null;
+    },
+    onRemoveThinking: () => {
+      thinkingEl.remove();
+    },
+    onAppendContent: (responseText) => {
+      assistantContent.dataset.raw = responseText;
+      assistantContent.innerHTML = renderMarkdown(responseText);
+    },
+    onCancelled: ({ generation: currentGeneration, responseText }) => {
+      if (!currentGeneration.discardAssistantBubble && !responseText) {
         assistantContent.textContent = '[キャンセル]';
         assistantContent.classList.add('message__content--error');
       }
-      if (!generation.suppressCancelledStatus) {
+      if (!currentGeneration.suppressCancelledStatus) {
         setStatus('生成をキャンセルしました', 'warn');
       }
-    } else {
+    },
+    onError: (error) => {
       assistantContent.textContent = `[エラー: ${error}]`;
       assistantContent.classList.add('message__content--error');
       setStatus(`エラー: ${error}`, 'error');
-    }
-    finish();
-  });
-
-  async function finish() {
-    if (finishCalled) return;
-    finishCalled = true;
-    unsubChunk();
-    unsubError();
-    isGenerating = false;
-    currentRequestId = null;
-    cancelBtn.style.display = 'none';
-    if (activeGeneration === generation) activeGeneration = null;
-
-    if (generation.discardAssistantBubble) {
-      generation.assistantWrapper.remove();
-    }
-
-    if (!generation.discardAssistantBubble && done && responseText) {
+    },
+    onPersistAssistant: async ({ sessionId: currentSessionId, paramsSnapshot: currentParamsSnapshot, responseText }) => {
       const assistantMsg = {
         role: 'assistant',
         content: responseText,
-        paramsSnapshot,
+        paramsSnapshot: currentParamsSnapshot,
       };
       messages.push(assistantMsg);
-      attachAssistantButtons(assistantWrapper, paramsSnapshot);
+      attachAssistantButtons(assistantWrapper, currentParamsSnapshot);
       try {
-        await window.sessions.appendMessage(sessionId, assistantMsg);
+        await window.sessions.appendMessage(currentSessionId, assistantMsg);
         await loadSessions();
         setStatus('');
       } catch {
         setStatus('応答の保存に失敗しました（表示は正常です）', 'warn');
       }
+    },
+    onDiscardAssistant: (active) => {
+      active.assistantWrapper.remove();
+    },
+    onAfterFinish: () => {
+      updateSendButton();
+    },
+    onFinishResolved: () => {
+      finishResolve();
+    },
+    unsubChunk: routing.unsubChunk,
+    unsubError: routing.unsubError,
+    unsubProgress: routing.unsubProgress,
+    unsubSearchInfo: routing.unsubSearchInfo,
+    unsubThinking: routing.unsubThinking,
+  });
+
+  window.ollama.checkLoaded(model).then(({ loaded }) => {
+    const label = lifecycle.updateThinkingLabel(loaded);
+    if (label) {
+      const labelEl = thinkingEl.querySelector('.thinking-indicator__label');
+      if (labelEl) labelEl.textContent = label;
     }
-    updateSendButton();
-    finishResolve();
-  }
+  }).catch(() => { /* ignore; label stays at default */ });
 
   window.ollama.chat(requestId, {
     model,
     messages: messagesForRequest(),
     system,
     options,
+    webSearchEnabled,
   });
 }
 
@@ -980,6 +1271,7 @@ async function sendMessage() {
   // Snapshot the params at the moment generation starts, so edits made during
   // the response don't leak into this assistant turn's audit trail.
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
+  const webSearchEnabled = isWebSearchAvailable && !!(webSearchToggle && webSearchToggle.checked);
 
   // Render user message
   const userMsg = { role: 'user', content: text };
@@ -1013,6 +1305,7 @@ async function sendMessage() {
     sessionId,
     ...chatParams,
     paramsSnapshot,
+    webSearchEnabled,
   });
 }
 
@@ -1032,10 +1325,34 @@ function startNewChat() {
 }
 
 // ---------------------------------------------------------------------------
-// Pane collapse
+// Pane collapse and resizing
 // ---------------------------------------------------------------------------
 
 const PANE_STATE_KEY = 'paneCollapsed';
+const PANE_SIZE_KEY = 'paneSizes';
+const MIN_PANE_WIDTH = 150;
+
+let isResizing = false;
+let resizingEdge = null;
+let paneSizes = { left: 220, right: 320 };
+
+function savePaneSizes(left, right) {
+  try {
+    localStorage.setItem(PANE_SIZE_KEY, JSON.stringify({ left, right }));
+  } catch (_) {}
+}
+
+function loadPaneSizes() {
+  let sizes = { left: 220, right: 320 };
+  try {
+    const stored = localStorage.getItem(PANE_SIZE_KEY);
+    if (stored) sizes = JSON.parse(stored);
+  } catch (_) {}
+  paneSizes = sizes;
+  // Apply sizes to CSS variables
+  document.documentElement.style.setProperty('--left-pane-width', `${sizes.left}px`);
+  document.documentElement.style.setProperty('--right-pane-width', `${sizes.right}px`);
+}
 
 function applyPaneState(state) {
   const leftCollapsed = !!state.left;
@@ -1060,6 +1377,44 @@ function togglePane(side) {
   applyPaneState(state);
 }
 
+function startResizing(e, edge) {
+  if (e.button !== 0) return; // Left mouse button only
+  isResizing = true;
+  resizingEdge = edge;
+  e.preventDefault();
+  
+  const divider = edge === 'left' ? leftDivider : rightDivider;
+  divider.classList.add('dragging');
+}
+
+function onResize(e) {
+  if (!isResizing || !resizingEdge) return;
+  
+  const appRect = appEl.getBoundingClientRect();
+  const mouseX = e.clientX;
+  
+  if (resizingEdge === 'left') {
+    const newWidth = Math.max(MIN_PANE_WIDTH, mouseX - appRect.left);
+    paneSizes.left = newWidth;
+    document.documentElement.style.setProperty('--left-pane-width', `${newWidth}px`);
+  } else if (resizingEdge === 'right') {
+    const newWidth = Math.max(MIN_PANE_WIDTH, appRect.right - mouseX);
+    paneSizes.right = newWidth;
+    document.documentElement.style.setProperty('--right-pane-width', `${newWidth}px`);
+  }
+}
+
+function stopResizing() {
+  if (!isResizing) return;
+  isResizing = false;
+  
+  const divider = resizingEdge === 'left' ? leftDivider : rightDivider;
+  divider.classList.remove('dragging');
+  
+  resizingEdge = null;
+  savePaneSizes(paneSizes.left, paneSizes.right);
+}
+
 // ---------------------------------------------------------------------------
 // Event listeners
 // ---------------------------------------------------------------------------
@@ -1068,6 +1423,12 @@ newSessionBtn.addEventListener('click', startNewChat);
 
 leftPaneToggle.addEventListener('click', () => togglePane('left'));
 rightPaneToggle.addEventListener('click', () => togglePane('right'));
+
+// Resizable dividers
+leftDivider.addEventListener('mousedown', (e) => startResizing(e, 'left'));
+rightDivider.addEventListener('mousedown', (e) => startResizing(e, 'right'));
+document.addEventListener('mousemove', onResize);
+document.addEventListener('mouseup', stopResizing);
 
 settingsBtn.addEventListener('click', openSettings);
 settingsCloseBtn.addEventListener('click', closeSettings);
@@ -1079,6 +1440,14 @@ settingsModal.addEventListener('click', (e) => {
 presetSelect.addEventListener('change', () => selectPreset(presetSelect.value));
 savePresetBtn.addEventListener('click', savePresetOverwrite);
 newPresetBtn.addEventListener('click', savePresetAsNew);
+tavilyApiKeySaveBtn.addEventListener('click', saveTavilyApiKeyFromSettings);
+tavilyApiKeyDeleteBtn.addEventListener('click', deleteTavilyApiKeyFromSettings);
+tavilyApiKeyInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveTavilyApiKeyFromSettings();
+  }
+});
 
 cancelBtn.addEventListener('click', () => {
   if (currentRequestId !== null) {
@@ -1108,12 +1477,14 @@ inputForm.addEventListener('submit', (e) => {
   // Initialize markdown rendering
   configureMarked();
 
-  // Restore pane collapse state
+  // Restore pane sizes and collapse state
+  loadPaneSizes();
   let paneState = {};
   try { paneState = JSON.parse(localStorage.getItem(PANE_STATE_KEY) || '{}'); } catch (_) {}
   applyPaneState(paneState);
 
   renderEditor();
+  await loadTavilyConfigStatus();
   await Promise.all([loadModels(), loadPresets(), loadSessions()]);
   messageInput.focus();
 })();

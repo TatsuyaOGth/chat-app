@@ -1,233 +1,347 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const fs = require('node:fs');
 const path = require('node:path');
-const http = require('node:http');
+const https = require('node:https');
 
 const storage = require('./storage');
+const { ollamaRequest, ollamaChatStream } = require('./ollama');
 
 // ---------------------------------------------------------------------------
 // Ollama configuration (local-only; no external network required)
 // ---------------------------------------------------------------------------
-const OLLAMA_HOST = 'localhost';
-const OLLAMA_PORT = 11434;
-const OLLAMA_REQUEST_TIMEOUT_MS = 10_000;
-
-/** ms of silence before an in-flight stream is declared timed-out. */
-const INACTIVITY_TIMEOUT_MS = 30_000;
-
 /** Map<requestId, abortFn> — lets the cancel IPC handler kill a live request. */
 const activeRequests = new Map();
 
-/** Low-level helper: issue an HTTP request to the local Ollama server. */
-function ollamaRequest(method, pathname, body) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const resolveOnce = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const rejectOnce = (error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
+const TAVILY_API_URL = 'https://api.tavily.com/search';
+const TAVILY_TIMEOUT_MS = 12_000;
+const TAVILY_CONFIG_FILENAME = 'tavily-config.json';
+const OLLAMA_SUMMARY_TIMEOUT_MS = 300_000;
 
-    const payload = body ? JSON.stringify(body) : null;
-    const options = {
-      hostname: OLLAMA_HOST,
-      port: OLLAMA_PORT,
-      path: pathname,
-      method,
+function getTavilyConfigPath() {
+  return path.join(app.getPath('userData'), TAVILY_CONFIG_FILENAME);
+}
+
+function readTavilyApiKeyFromLocalConfig() {
+  try {
+    const configPath = getTavilyConfigPath();
+    if (!fs.existsSync(configPath)) return null;
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const key = parsed?.apiKey;
+    if (typeof key !== 'string') return null;
+    const trimmed = key.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeTavilyApiKeyToLocalConfig(apiKey) {
+  const trimmed = String(apiKey || '').trim();
+  if (!trimmed) {
+    throw new Error('API Key を入力してください');
+  }
+
+  const configPath = getTavilyConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    apiKey: trimmed,
+    updatedAt: new Date().toISOString(),
+  }, null, 2), 'utf8');
+  return configPath;
+}
+
+function deleteTavilyApiKeyLocalConfig() {
+  const configPath = getTavilyConfigPath();
+  if (fs.existsSync(configPath)) {
+    fs.unlinkSync(configPath);
+    return { deleted: true, path: configPath };
+  }
+  return { deleted: false, path: configPath };
+}
+
+function getTavilyConfigStatus() {
+  const envKey = process.env.TAVILY_API_KEY;
+  if (typeof envKey === 'string' && envKey.trim()) {
+    return { configured: true, source: 'env' };
+  }
+  const localKey = readTavilyApiKeyFromLocalConfig();
+  if (localKey) {
+    return { configured: true, source: 'file' };
+  }
+  return { configured: false, source: 'none' };
+}
+
+function getTavilyApiKey() {
+  const envKey = process.env.TAVILY_API_KEY;
+  if (typeof envKey === 'string' && envKey.trim()) {
+    return envKey.trim();
+  }
+  return readTavilyApiKeyFromLocalConfig();
+}
+
+function isLikelyInvalidTavilyKeyError(error) {
+  const msg = String(error?.message || error || '').toLowerCase();
+  const patterns = [
+    'http 401',
+    'http 403',
+    'unauthorized',
+    'forbidden',
+    'invalid api key',
+    'invalid_api_key',
+    'api key is invalid',
+    'api_key is invalid',
+    'missing api key',
+    'missing api_key',
+    'api key missing',
+    'api_key missing',
+    'api key provided is invalid',
+  ];
+  if (patterns.some((p) => msg.includes(p))) return true;
+  return msg.includes('api key') && msg.includes('invalid');
+}
+
+function isSummaryTimeoutError(error) {
+  const msg = String(error?.message || error || '').toLowerCase();
+  return msg.includes('timed out') || msg.includes('timeout');
+}
+
+function getLatestUserMessage(messages) {
+  if (!Array.isArray(messages)) return '';
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg?.role === 'user' && typeof msg.content === 'string' && msg.content.trim()) {
+      return msg.content.trim();
+    }
+  }
+  return '';
+}
+
+function shortenText(text, maxLen = 360) {
+  if (typeof text !== 'string') return '';
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxLen) return compact;
+  return `${compact.slice(0, maxLen)}…`;
+}
+
+function deriveSearchOptionsFromQuery(query) {
+  const raw = String(query || '').replace(/[「」"']/g, ' ').trim();
+  const cleaned = raw
+    .replace(/要約してください|要約して|まとめてください|まとめて|教えてください|教えて/g, ' ')
+    .replace(/[。．！？!?]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const searchQuery = cleaned || raw;
+
+  const hasNewsIntent = /(ニュース|news)/i.test(searchQuery);
+  const hasRecencyIntent = /(先週|last week|今週|今日|最新|最近|直近|current|latest)/i.test(searchQuery);
+  const topic = hasNewsIntent || hasRecencyIntent ? 'news' : 'general';
+
+  let days;
+  if (/(先週|last week|直近1週間|過去7日|7日間)/i.test(searchQuery)) {
+    days = 7;
+  } else if (/(今月|先月|直近1か月|直近1ヶ月|過去30日|30日間|latest)/i.test(searchQuery)) {
+    days = 30;
+  }
+
+  return {
+    searchQuery,
+    topic,
+    days,
+    recencyDays: days,
+  };
+}
+
+function createTavilySearchRequest(apiKey, query, {
+  maxResults = 5,
+  timeoutMs = TAVILY_TIMEOUT_MS,
+  topic = 'general',
+  days,
+} = {}) {
+  let req;
+  const promise = new Promise((resolve, reject) => {
+    const body = {
+      api_key: apiKey,
+      query,
+      max_results: maxResults,
+      include_answer: true,
+      search_depth: 'advanced',
+      topic,
+    };
+    if (typeof days === 'number' && Number.isFinite(days) && days > 0) {
+      body.days = days;
+    }
+    const payload = JSON.stringify(body);
+
+    const url = new URL(TAVILY_API_URL);
+    req = https.request({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || 443,
+      path: url.pathname,
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+        'Content-Length': Buffer.byteLength(payload),
       },
-    };
-
-    const req = http.request(options, (res) => {
+    }, (res) => {
       let data = '';
-      res.on('data', (chunk) => { data += chunk; });
+      res.on('data', (chunk) => { data += chunk.toString('utf8'); });
       res.on('end', () => {
+        if (res.statusCode !== 200) {
+          let detail = data;
+          try {
+            const parsed = JSON.parse(data);
+            detail = parsed.error || parsed.message || data;
+          } catch {
+            // keep raw body detail
+          }
+          reject(new Error(`Tavily HTTP ${res.statusCode}: ${detail || '検索に失敗しました'}`));
+          return;
+        }
+
         try {
-          resolveOnce(JSON.parse(data));
+          resolve(JSON.parse(data));
         } catch {
-          resolveOnce(data);
+          reject(new Error('Tavily の応答JSONを解析できませんでした'));
         }
       });
     });
 
-    req.setTimeout(OLLAMA_REQUEST_TIMEOUT_MS, () => {
-      req.destroy();
-      rejectOnce(new Error(`Ollama request timed out after ${OLLAMA_REQUEST_TIMEOUT_MS}ms`));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`Tavily request timed out after ${timeoutMs}ms`));
     });
-    req.on('error', rejectOnce);
-    if (payload) req.write(payload);
+    req.on('error', reject);
+    req.write(payload);
     req.end();
   });
-}
 
-/**
- * Build the Ollama /api/chat request body.
- *
- * - `system` is injected as the first message with role "system" (Ollama's
- *   /api/chat does not accept a top-level `system` field — only /api/generate
- *   does — so we prepend it to the messages array instead).
- * - Any keys in `options` whose value is `null` or `undefined` are dropped so
- *   Ollama falls back to its defaults for those parameters.
- */
-function buildChatBody({ model, messages, system, options }) {
-  const finalMessages = system && system.trim()
-    ? [{ role: 'system', content: system }, ...messages]
-    : messages;
-
-  const cleanedOptions = {};
-  if (options && typeof options === 'object') {
-    for (const [key, value] of Object.entries(options)) {
-      if (value !== null && value !== undefined) cleanedOptions[key] = value;
-    }
-  }
-
-  const body = { model, messages: finalMessages, stream: true };
-  if (Object.keys(cleanedOptions).length > 0) body.options = cleanedOptions;
-  return body;
-}
-
-/**
- * Stream a chat request to Ollama.
- * Calls `onChunk(content)` for each token and `onDone()` when finished.
- * `requestId` is used to register an abort handle in `activeRequests`.
- */
-function ollamaChatStream({ requestId, model, messages, system, options }, onChunk, onDone, onError) {
-  const payload = JSON.stringify(buildChatBody({ model, messages, system, options }));
-  const reqOptions = {
-    hostname: OLLAMA_HOST,
-    port: OLLAMA_PORT,
-    path: '/api/chat',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(payload),
+  return {
+    promise,
+    abort: () => {
+      if (req) req.destroy();
     },
   };
+}
 
-  let finished = false;
-  let inactivityTimer = null;
+function normalizeTavilyResults(raw, { recencyDays } = {}) {
+  const results = Array.isArray(raw?.results) ? raw.results : [];
+  const mapped = results
+    .map((item) => {
+      const publishedAt = typeof item?.published_date === 'string' ? item.published_date : null;
+      const publishedAtTs = publishedAt ? Date.parse(publishedAt) : Number.NaN;
+      return {
+        title: shortenText(typeof item?.title === 'string' ? item.title : '', 140),
+        url: typeof item?.url === 'string' ? item.url.trim() : '',
+        snippet: shortenText(typeof item?.content === 'string' ? item.content : '', 360),
+        publishedAt,
+        publishedAtTs,
+      };
+    })
+    .filter((item) => item.title || item.url || item.snippet);
 
-  function resetInactivityTimer() {
-    clearTimeout(inactivityTimer);
-    inactivityTimer = setTimeout(() => {
-      if (!finished) {
-        finished = true;
-        cleanup();
-        req.destroy();
-        onError(new Error('応答タイムアウト: サーバーからの応答が途絶えました'));
-      }
-    }, INACTIVITY_TIMEOUT_MS);
+  let ranked = mapped;
+  if (typeof recencyDays === 'number' && Number.isFinite(recencyDays) && recencyDays > 0) {
+    const cutoff = Date.now() - (recencyDays * 24 * 60 * 60 * 1000);
+    const recent = mapped.filter((item) => Number.isFinite(item.publishedAtTs) && item.publishedAtTs >= cutoff);
+    const undated = mapped.filter((item) => !Number.isFinite(item.publishedAtTs));
+    if (recent.length > 0) {
+      ranked = [...recent, ...undated];
+    }
   }
 
-  function cleanup() {
-    clearTimeout(inactivityTimer);
-    activeRequests.delete(requestId);
+  return {
+    answer: shortenText(typeof raw?.answer === 'string' ? raw.answer : '', 400),
+    results: ranked
+      .slice(0, 5),
+  };
+}
+
+async function summarizeSearchResultsWithModel(model, query, searchData) {
+  const lines = searchData.results.map((r, idx) => (
+    `${idx + 1}. ${r.title}\nURL: ${r.url}\n要約: ${r.snippet}`
+  ));
+
+  const userPrompt = [
+    `ユーザー質問: ${query}`,
+    searchData.answer ? `Tavily answer:\n${searchData.answer}` : '',
+    '検索結果:',
+    lines.join('\n\n'),
+    '',
+    '要件:',
+    '- 日本語で簡潔に要約する',
+    '- 事実のみを述べる',
+    '- 末尾に「出典」を付け、対応するURL番号を示す',
+  ].filter(Boolean).join('\n');
+
+  const response = await ollamaRequest('POST', '/api/chat', {
+    model,
+    stream: false,
+    messages: [
+      {
+        role: 'system',
+        content: 'あなたは検索結果の要約アシスタントです。憶測せず、与えられた情報のみで回答してください。',
+      },
+      {
+        role: 'user',
+        content: userPrompt,
+      },
+    ],
+    options: {
+      temperature: 0.2,
+      num_predict: 220,
+    },
+  }, {
+    requestTimeoutMs: OLLAMA_SUMMARY_TIMEOUT_MS,
+  });
+
+  const summary = response?.message?.content;
+  return typeof summary === 'string' ? summary.trim() : '';
+}
+
+function buildFallbackSummaryFromSearchData(query, searchData) {
+  const lines = [];
+  if (searchData.answer) {
+    lines.push(`- Tavily回答: ${searchData.answer}`);
   }
 
-  const req = http.request(reqOptions, (res) => {
-    // Non-200 → read body text then report as error; never call onDone.
-    if (res.statusCode !== 200) {
-      let errBody = '';
-      res.on('data', (c) => { errBody += c.toString('utf8'); });
-      res.on('end', () => {
-        if (finished) return;
-        finished = true;
-        cleanup();
-        let detail;
-        try {
-          const parsed = JSON.parse(errBody);
-          detail = parsed.error || parsed.message || errBody;
-        } catch {
-          detail = errBody || `HTTP ${res.statusCode}`;
-        }
-        onError(new Error(`HTTP ${res.statusCode}: ${detail}`));
-      });
-      return;
-    }
-
-    resetInactivityTimer();
-    let buffer = '';
-    let parseFailCount = 0;
-
-    res.on('data', (chunk) => {
-      resetInactivityTimer();
-      buffer += chunk.toString('utf8');
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed.message?.content) onChunk(parsed.message.content);
-          if (parsed.done && !finished) {
-            finished = true;
-            cleanup();
-            onDone();
-          }
-        } catch {
-          parseFailCount++;
-          if (parseFailCount <= 3 || parseFailCount % 20 === 0) {
-            console.warn(`[ollama:${requestId}] JSON parse failed (×${parseFailCount}):`, line.slice(0, 200));
-          }
-        }
-      }
-    });
-
-    res.on('end', () => {
-      // Flush remaining buffer
-      if (buffer.trim()) {
-        try {
-          const parsed = JSON.parse(buffer);
-          if (parsed.message?.content && !finished) onChunk(parsed.message.content);
-          if (parsed.done && !finished) {
-            finished = true;
-            cleanup();
-            onDone();
-            return;
-          }
-        } catch {
-          console.warn(`[ollama:${requestId}] JSON parse failed on final buffer:`, buffer.slice(0, 200));
-        }
-      }
-      // Stream closed without done:true → treat as normal completion.
-      if (!finished) {
-        finished = true;
-        cleanup();
-        onDone();
-      }
-    });
+  searchData.results.slice(0, 3).forEach((r, idx) => {
+    const title = r.title || `結果${idx + 1}`;
+    const snippet = r.snippet || '(要約なし)';
+    lines.push(`- ${title}: ${snippet}`);
   });
 
-  req.on('error', (err) => {
-    if (!finished) {
-      finished = true;
-      cleanup();
-      onError(err);
-    }
-  });
+  if (lines.length === 0) {
+    return `「${query}」に関する検索結果は取得できましたが、要約できませんでした。出典を参照して回答してください。`;
+  }
 
-  req.write(payload);
-  req.end();
+  return [
+    `「${query}」に関する検索結果サマリー:`,
+    ...lines,
+  ].join('\n');
+}
 
-  // Register abort handle; returns true if the request was actually cancelled.
-  activeRequests.set(requestId, () => {
-    if (!finished) {
-      finished = true;
-      cleanup();
-      req.destroy();
-      return true;
-    }
-    return false;
-  });
+function mergeSystemWithSearchSummary(system, summary, searchData) {
+  const sourceLines = searchData.results
+    .map((r, idx) => `${idx + 1}. ${r.title || '(no title)'} - ${r.url || '(no url)'}`)
+    .join('\n');
+
+  const searchBlock = [
+    '以下は外部Web検索の要約です。回答時の参考情報として扱い、断定できない場合は不確実性を明示してください。',
+    '',
+    '[検索要約]',
+    summary,
+    '',
+    '[出典]',
+    sourceLines,
+  ].join('\n');
+
+  if (typeof system === 'string' && system.trim()) {
+    return `${system.trim()}\n\n${searchBlock}`;
+  }
+  return searchBlock;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,10 +359,25 @@ ipcMain.handle('ollama:get-models', async () => {
 });
 
 /**
+ * Check whether a given model is currently loaded in Ollama's process list.
+ * Returns { loaded: boolean }.
+ */
+ipcMain.handle('ollama:check-loaded', async (_event, model) => {
+  try {
+    const result = await ollamaRequest('GET', '/api/ps', null);
+    const running = result.models || [];
+    const loaded = running.some((m) => m.name === model || m.model === model);
+    return { loaded };
+  } catch {
+    return { loaded: false };
+  }
+});
+
+/**
  * Streaming chat: fires `ollama:chat:chunk` events back to the renderer
  * until the response is complete or an error occurs.
  *
- * Payload: { requestId, model, messages, system?, options? }
+ * Payload: { requestId, model, messages, system?, options?, webSearchEnabled? }
  */
 ipcMain.on('ollama:chat', (event, payload) => {
   const send = (channel, data) => {
@@ -257,14 +386,129 @@ ipcMain.on('ollama:chat', (event, payload) => {
     }
   };
 
-  const { requestId, model, messages, system, options } = payload;
+  const {
+    requestId,
+    model,
+    messages,
+    system,
+    options,
+    webSearchEnabled = false,
+  } = payload;
 
-  ollamaChatStream(
-    { requestId, model, messages, system, options },
-    (content) => send('ollama:chat:chunk', { requestId, content, done: false }),
-    () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
-    (err) => send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' }),
-  );
+  let cancelled = false;
+  let stageAbort = null;
+  let searchInfoSent = false;
+
+  const emitSearchInfo = (query, summary, results) => {
+    if (searchInfoSent) return;
+    searchInfoSent = true;
+    send('ollama:chat:search-info', {
+      requestId,
+      query,
+      summary,
+      results,
+    });
+  };
+
+  activeRequests.set(requestId, () => {
+    if (cancelled) return false;
+    cancelled = true;
+    if (typeof stageAbort === 'function') stageAbort();
+    activeRequests.delete(requestId);
+    return true;
+  });
+
+  (async () => {
+    let effectiveSystem = system;
+
+    if (webSearchEnabled) {
+      send('ollama:chat:progress', { requestId, stage: 'search', message: 'ウェブ検索中…' });
+      const query = getLatestUserMessage(messages);
+      const tavilyApiKey = getTavilyApiKey();
+
+      if (!tavilyApiKey) {
+        activeRequests.delete(requestId);
+        send('ollama:chat:error', {
+          requestId,
+          error: 'Tavily API Key が設定されていないため、検索つき生成を開始できません。',
+        });
+        return;
+      }
+
+      if (query && tavilyApiKey) {
+        const searchOptions = deriveSearchOptionsFromQuery(query);
+        const searchReq = createTavilySearchRequest(tavilyApiKey, searchOptions.searchQuery, {
+          topic: searchOptions.topic,
+          days: searchOptions.days,
+        });
+        stageAbort = searchReq.abort;
+
+        let searchData;
+        try {
+          searchData = await searchReq.promise;
+        } catch (err) {
+          if (!cancelled) {
+            console.warn(`[tavily:${requestId}] search failed:`, err.message || err);
+          }
+          if (isLikelyInvalidTavilyKeyError(err)) {
+            activeRequests.delete(requestId);
+            send('ollama:chat:error', {
+              requestId,
+              error: 'Tavily API Key が無効です。設定を確認してください。',
+            });
+            return;
+          }
+          searchData = null;
+        }
+
+        stageAbort = null;
+        if (cancelled) return;
+
+        const normalized = normalizeTavilyResults(searchData, { recencyDays: searchOptions.recencyDays });
+        if (normalized.answer || normalized.results.length > 0) {
+          send('ollama:chat:progress', { requestId, stage: 'summarize', message: '検索結果を要約中…' });
+          try {
+            const summary = await summarizeSearchResultsWithModel(model, query, normalized);
+            if (!cancelled) {
+              const mergedSummary = summary || buildFallbackSummaryFromSearchData(query, normalized);
+              effectiveSystem = mergeSystemWithSearchSummary(system, mergedSummary, normalized);
+              emitSearchInfo(query, mergedSummary, normalized.results);
+            }
+          } catch (err) {
+            if (!cancelled) {
+              console.warn(`[tavily:${requestId}] summarize failed:`, err.message || err);
+              const fallbackSummary = buildFallbackSummaryFromSearchData(query, normalized);
+              effectiveSystem = mergeSystemWithSearchSummary(system, fallbackSummary, normalized);
+              emitSearchInfo(query, fallbackSummary, normalized.results);
+              const timeoutMessage = '要約がタイムアウトしたため、検索結果を直接反映して続行します…';
+              const fallbackMessage = '要約に失敗したため検索結果を直接反映します…';
+              send('ollama:chat:progress', {
+                requestId,
+                stage: 'summarize',
+                message: isSummaryTimeoutError(err) ? timeoutMessage : fallbackMessage,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (cancelled) return;
+
+    send('ollama:chat:progress', { requestId, stage: 'generating', message: '回答を生成中…' });
+    ollamaChatStream(
+      { requestId, model, messages, system: effectiveSystem, options },
+      (content) => send('ollama:chat:chunk', { requestId, content, done: false }),
+      () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
+      (err) => send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' }),
+      { activeRequests },
+      (thinking) => send('ollama:chat:thinking', { requestId, thinking }),
+    );
+  })().catch((err) => {
+    if (cancelled) return;
+    activeRequests.delete(requestId);
+    send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' });
+  });
 });
 
 ipcMain.on('ollama:chat:cancel', (event, { requestId }) => {
@@ -293,6 +537,36 @@ ipcMain.handle('dialog:confirm', async (event, message) => {
     message,
   });
   return response === 1;
+});
+
+// ---------------------------------------------------------------------------
+// IPC handlers — Tavily config
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('tavily:get-config-status', () => {
+  try {
+    return getTavilyConfigStatus();
+  } catch (err) {
+    return { configured: false, source: 'none', error: err.message || String(err) };
+  }
+});
+
+ipcMain.handle('tavily:save-api-key', (_event, apiKey) => {
+  try {
+    const configPath = writeTavilyApiKeyToLocalConfig(apiKey);
+    return { ok: true, path: configPath };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+
+ipcMain.handle('tavily:delete-api-key', () => {
+  try {
+    const result = deleteTavilyApiKeyLocalConfig();
+    return { ok: true, ...result };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
 });
 
 // ---------------------------------------------------------------------------

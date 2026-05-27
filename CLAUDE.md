@@ -8,7 +8,7 @@
 npm start        # Electron アプリを起動（事前に Ollama をローカルで起動しておく必要あり）
 ```
 
-ビルドステップ、バンドラー、トランスパイラー、テストスイートはありません。JavaScript は Electron によって直接読み込まれます。
+ビルドステップ、バンドラー、トランスパイラーはありません。JavaScript は Electron によって直接読み込まれます。
 
 **前提条件:** アプリ起動前に Ollama が `localhost:11434` で動作している必要があります。`ollama pull <モデル名>` でモデルをインストールしてください（例: `ollama pull llama3`）。
 

@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('ollama', {
   getModels: () => ipcRenderer.invoke('ollama:get-models'),
 
   /**
+   * Check whether a model is currently loaded in Ollama (via /api/ps).
+   * @param {string} model  Model name to check.
+   * @returns {Promise<{ loaded: boolean }>}
+   */
+  checkLoaded: (model) => ipcRenderer.invoke('ollama:check-loaded', model),
+
+  /**
    * Send a chat request and receive the response as a stream.
    *
    * @param {string} requestId  Caller-generated unique ID for this request.
@@ -26,9 +33,10 @@ contextBridge.exposeInMainWorld('ollama', {
    * @param {object} [payload.options] Optional Ollama parameters (temperature, top_p, …).
    *                                   Keys with `null`/`undefined` values are dropped so
    *                                   Ollama uses its defaults.
+   * @param {boolean} [payload.webSearchEnabled] Whether to run web search before generation.
    */
-  chat: (requestId, { model, messages, system, options } = {}) =>
-    ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options }),
+  chat: (requestId, { model, messages, system, options, webSearchEnabled } = {}) =>
+    ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options, webSearchEnabled }),
 
   /**
    * Cancel an in-progress streaming request by its requestId.
@@ -57,6 +65,39 @@ contextBridge.exposeInMainWorld('ollama', {
     ipcRenderer.on('ollama:chat:error', handler);
     return () => ipcRenderer.removeListener('ollama:chat:error', handler);
   },
+
+  /**
+   * Register a listener for generation progress updates.
+   * The callback receives `{ requestId, stage, message }`.
+   * @returns {function} Unsubscribe function.
+   */
+  onChatProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('ollama:chat:progress', handler);
+    return () => ipcRenderer.removeListener('ollama:chat:progress', handler);
+  },
+
+  /**
+   * Register a listener for search summary/result payloads.
+   * The callback receives `{ requestId, query, summary, results }`.
+   * @returns {function} Unsubscribe function.
+   */
+  onChatSearchInfo: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('ollama:chat:search-info', handler);
+    return () => ipcRenderer.removeListener('ollama:chat:search-info', handler);
+  },
+
+  /**
+   * Register a listener for model reasoning/thinking chunks.
+   * The callback receives `{ requestId, thinking }`.
+   * @returns {function} Unsubscribe function.
+   */
+  onChatThinking: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('ollama:chat:thinking', handler);
+    return () => ipcRenderer.removeListener('ollama:chat:thinking', handler);
+  },
 });
 
 contextBridge.exposeInMainWorld('app', {
@@ -80,4 +121,10 @@ contextBridge.exposeInMainWorld('sessions', {
   update: (id, patch) => ipcRenderer.invoke('sessions:update', id, patch),
   appendMessage: (id, message) => ipcRenderer.invoke('sessions:append-message', id, message),
   delete: (id) => ipcRenderer.invoke('sessions:delete', id),
+});
+
+contextBridge.exposeInMainWorld('tavily', {
+  getConfigStatus: () => ipcRenderer.invoke('tavily:get-config-status'),
+  saveApiKey: (apiKey) => ipcRenderer.invoke('tavily:save-api-key', apiKey),
+  deleteApiKey: () => ipcRenderer.invoke('tavily:delete-api-key'),
 });
