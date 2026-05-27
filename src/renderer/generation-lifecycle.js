@@ -25,6 +25,7 @@
     unsubError,
     unsubProgress,
     unsubSearchInfo,
+    unsubThinking,
   }) {
     let responseText = '';
     let done = false;
@@ -45,6 +46,7 @@
       unsubError();
       if (typeof unsubProgress === 'function') unsubProgress();
       if (typeof unsubSearchInfo === 'function') unsubSearchInfo();
+      if (typeof unsubThinking === 'function') unsubThinking();
       clearUiState(generation);
 
       if (generation.discardAssistantBubble) {

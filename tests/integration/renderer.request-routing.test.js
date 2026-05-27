@@ -5,9 +5,11 @@ const { subscribeGenerationRouting } = require('../../src/renderer/request-routi
 function createOllamaMock() {
   let chunkListener;
   let errorListener;
+  let thinkingListener;
 
   const unsubChunkRaw = jest.fn();
   const unsubErrorRaw = jest.fn();
+  const unsubThinkingRaw = jest.fn();
 
   return {
     ollama: {
@@ -19,11 +21,17 @@ function createOllamaMock() {
         errorListener = listener;
         return unsubErrorRaw;
       }),
+      onChatThinking: jest.fn((listener) => {
+        thinkingListener = listener;
+        return unsubThinkingRaw;
+      }),
     },
     emitChunk: (data) => chunkListener(data),
     emitError: (data) => errorListener(data),
+    emitThinking: (data) => thinkingListener(data),
     unsubChunkRaw,
     unsubErrorRaw,
+    unsubThinkingRaw,
   };
 }
 
@@ -64,7 +72,42 @@ describe('renderer request routing', () => {
     expect(onError).toHaveBeenCalledWith({ requestId: 'req-2', error: 'HTTP 503: busy', cancelled: false });
   });
 
-  test('unsubscribeAll は両 listener を一度だけ解除する', () => {
+  test('requestId 一致の thinking だけを転送する', () => {
+    const mock = createOllamaMock();
+    const onThinking = jest.fn();
+
+    subscribeGenerationRouting({
+      ollama: mock.ollama,
+      requestId: 'req-4',
+      onChunk: jest.fn(),
+      onError: jest.fn(),
+      onThinking,
+    });
+
+    mock.emitThinking({ requestId: 'other', thinking: 'ignore' });
+    mock.emitThinking({ requestId: 'req-4', thinking: 'step 1' });
+    mock.emitThinking({ requestId: 'req-4', thinking: 'step 2' });
+
+    expect(onThinking).toHaveBeenCalledTimes(2);
+    expect(onThinking).toHaveBeenNthCalledWith(1, { requestId: 'req-4', thinking: 'step 1' });
+    expect(onThinking).toHaveBeenNthCalledWith(2, { requestId: 'req-4', thinking: 'step 2' });
+  });
+
+  test('onThinking 未指定でも ollama.onChatThinking はスキップされる', () => {
+    const mock = createOllamaMock();
+
+    subscribeGenerationRouting({
+      ollama: mock.ollama,
+      requestId: 'req-5',
+      onChunk: jest.fn(),
+      onError: jest.fn(),
+      // onThinking を渡さない
+    });
+
+    expect(mock.ollama.onChatThinking).not.toHaveBeenCalled();
+  });
+
+  test('unsubscribeAll は全 listener を一度だけ解除する（thinking 含む）', () => {
     const mock = createOllamaMock();
 
     const routing = subscribeGenerationRouting({
@@ -72,6 +115,7 @@ describe('renderer request routing', () => {
       requestId: 'req-3',
       onChunk: jest.fn(),
       onError: jest.fn(),
+      onThinking: jest.fn(),
     });
 
     routing.unsubscribeAll();
@@ -79,5 +123,31 @@ describe('renderer request routing', () => {
 
     expect(mock.unsubChunkRaw).toHaveBeenCalledTimes(1);
     expect(mock.unsubErrorRaw).toHaveBeenCalledTimes(1);
+    expect(mock.unsubThinkingRaw).toHaveBeenCalledTimes(1);
+  });
+
+  test('unsubThinking を呼んだ後に unsubscribeAll を呼んでも二重解除しない', () => {
+    const mock = createOllamaMock();
+
+    const routing = subscribeGenerationRouting({
+      ollama: mock.ollama,
+      requestId: 'req-6',
+      onChunk: jest.fn(),
+      onError: jest.fn(),
+      onThinking: jest.fn(),
+    });
+
+    // unsubThinking を個別に呼ぶと unsubThinkingRaw が 1 回呼ばれる
+    routing.unsubThinking();
+    expect(mock.unsubThinkingRaw).toHaveBeenCalledTimes(1);
+
+    // unsubscribeAll を 2 回呼んでも 2 回目は unsubscribed フラグで止まる
+    routing.unsubscribeAll();
+    routing.unsubscribeAll();
+
+    // unsubThinkingRaw は unsubThinking() で 1 回 + unsubscribeAll() で 1 回 = 2 回
+    expect(mock.unsubThinkingRaw).toHaveBeenCalledTimes(2);
+    // 2 回目の unsubscribeAll() では呼ばれない（フラグで止まる）
+    expect(mock.unsubChunkRaw).toHaveBeenCalledTimes(1);
   });
 });

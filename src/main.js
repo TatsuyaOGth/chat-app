@@ -502,6 +502,7 @@ ipcMain.on('ollama:chat', (event, payload) => {
       () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
       (err) => send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' }),
       { activeRequests },
+      (thinking) => send('ollama:chat:thinking', { requestId, thinking }),
     );
   })().catch((err) => {
     if (cancelled) return;

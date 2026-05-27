@@ -7,7 +7,7 @@
   }
   root.RequestRouting = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window, () => {
-  function subscribeGenerationRouting({ ollama, requestId, onChunk, onError, onProgress, onSearchInfo }) {
+  function subscribeGenerationRouting({ ollama, requestId, onChunk, onError, onProgress, onSearchInfo, onThinking }) {
     const unsubChunkRaw = ollama.onChatChunk((data) => {
       if (data.requestId !== requestId) return;
       onChunk(data);
@@ -32,6 +32,13 @@
       })
       : () => {};
 
+    const unsubThinkingRaw = typeof onThinking === 'function'
+      ? ollama.onChatThinking((data) => {
+        if (data.requestId !== requestId) return;
+        onThinking(data);
+      })
+      : () => {};
+
     let unsubscribed = false;
 
     const unsubChunk = () => {
@@ -49,6 +56,16 @@
       unsubProgressRaw();
     };
 
+    const unsubThinking = () => {
+      if (unsubscribed) return;
+      unsubThinkingRaw();
+    };
+
+    const unsubSearchInfo = () => {
+      if (unsubscribed) return;
+      unsubSearchInfoRaw();
+    };
+
     const unsubscribeAll = () => {
       if (unsubscribed) return;
       unsubscribed = true;
@@ -56,13 +73,15 @@
       unsubErrorRaw();
       unsubProgressRaw();
       unsubSearchInfoRaw();
+      unsubThinkingRaw();
     };
 
     return {
       unsubChunk,
       unsubError,
       unsubProgress,
-      unsubSearchInfo: unsubSearchInfoRaw,
+      unsubThinking,
+      unsubSearchInfo,
       unsubscribeAll,
     };
   }

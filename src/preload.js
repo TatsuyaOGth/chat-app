@@ -87,6 +87,17 @@ contextBridge.exposeInMainWorld('ollama', {
     ipcRenderer.on('ollama:chat:search-info', handler);
     return () => ipcRenderer.removeListener('ollama:chat:search-info', handler);
   },
+
+  /**
+   * Register a listener for model reasoning/thinking chunks.
+   * The callback receives `{ requestId, thinking }`.
+   * @returns {function} Unsubscribe function.
+   */
+  onChatThinking: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('ollama:chat:thinking', handler);
+    return () => ipcRenderer.removeListener('ollama:chat:thinking', handler);
+  },
 });
 
 contextBridge.exposeInMainWorld('app', {

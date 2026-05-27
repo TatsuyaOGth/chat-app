@@ -810,6 +810,60 @@ body {
   line-height: 1.5;
 }
 
+/* ─────────────────────────────────────────────────────────────────
+   Reasoning panel  (モデル推論過程)
+   ───────────────────────────────────────────────────────────────── */
+
+.reasoning-panel {
+  margin-top: 6px;
+  margin-bottom: 6px;
+  align-self: stretch;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.reasoning-panel__toggle {
+  list-style: none;
+  cursor: pointer;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: rgba(255, 255, 255, 0.01);
+  user-select: none;
+}
+
+.reasoning-panel__toggle::-webkit-details-marker {
+  display: none;
+}
+
+.reasoning-panel__toggle::after {
+  content: '▶';
+  float: right;
+  color: var(--color-text-muted);
+  font-style: normal;
+}
+
+.reasoning-panel[open] .reasoning-panel__toggle::after {
+  content: '▼';
+}
+
+.reasoning-panel__content {
+  border-top: 1px solid var(--color-border);
+  padding: 10px;
+  margin: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+}
+
 .input-form {
   display: flex;
   gap: 8px;

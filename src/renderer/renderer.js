@@ -744,8 +744,43 @@ function appendMessage(role, initialText) {
   return wrapper; // return the whole wrapper so callers can attach extras
 }
 
-function upsertSearchInfoPanel(wrapper, payload) {
-  if (!payload) return;
+/**
+ * Create or update the collapsible reasoning panel for a given assistant message.
+ * Called with each incremental thinking chunk; text is appended cumulatively.
+ * @param {HTMLElement} wrapper - The .message wrapper element.
+ * @param {string} thinkingChunk - New reasoning text to append.
+ */
+function upsertReasoningPanel(wrapper, thinkingChunk) {
+  if (!thinkingChunk) return;
+
+  let details = wrapper.querySelector('.reasoning-panel');
+  if (!details) {
+    details = document.createElement('details');
+    details.classList.add('reasoning-panel');
+
+    const summary = document.createElement('summary');
+    summary.classList.add('reasoning-panel__toggle');
+    summary.textContent = '🧠 推論過程';
+    details.appendChild(summary);
+
+    const content = document.createElement('pre');
+    content.classList.add('reasoning-panel__content');
+    details.appendChild(content);
+
+    // Insert before the message content so reasoning appears above the answer
+    const msgContent = wrapper.querySelector('.message__content');
+    if (msgContent) {
+      wrapper.insertBefore(details, msgContent);
+    } else {
+      wrapper.appendChild(details);
+    }
+  }
+
+  const contentEl = details.querySelector('.reasoning-panel__content');
+  if (contentEl) contentEl.textContent += thinkingChunk;
+}
+
+function upsertSearchInfoPanel(wrapper, payload) {  if (!payload) return;
   const summaryText = typeof payload.summary === 'string' ? payload.summary.trim() : '';
   const results = Array.isArray(payload.results) ? payload.results : [];
   if (!summaryText && results.length === 0) return;
@@ -1138,6 +1173,9 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     onSearchInfo: (data) => {
       upsertSearchInfoPanel(assistantWrapper, data);
     },
+    onThinking: (data) => {
+      upsertReasoningPanel(assistantWrapper, data.thinking);
+    },
   });
 
   lifecycle = createGenerationLifecycle({
@@ -1201,6 +1239,7 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     unsubError: routing.unsubError,
     unsubProgress: routing.unsubProgress,
     unsubSearchInfo: routing.unsubSearchInfo,
+    unsubThinking: routing.unsubThinking,
   });
 
   window.ollama.checkLoaded(model).then(({ loaded }) => {

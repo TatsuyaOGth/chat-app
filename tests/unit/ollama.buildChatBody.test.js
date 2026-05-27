@@ -15,6 +15,7 @@ describe('buildChatBody', () => {
       model: 'llama3',
       messages: [{ role: 'user', content: 'hello' }],
       stream: true,
+      think: true,
     });
   });
 
@@ -38,6 +39,7 @@ describe('buildChatBody', () => {
         { role: 'user', content: 'hello' },
       ],
       stream: true,
+      think: true,
       options: {
         temperature: 0.7,
         num_predict: 256,

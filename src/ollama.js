@@ -19,7 +19,7 @@ function buildChatBody({ model, messages, system, options }) {
     }
   }
 
-  const body = { model, messages: finalMessages, stream: true };
+  const body = { model, messages: finalMessages, stream: true, think: true };
   if (Object.keys(cleanedOptions).length > 0) body.options = cleanedOptions;
   return body;
 }
@@ -75,7 +75,7 @@ function ollamaRequest(method, pathname, body, deps = {}) {
   });
 }
 
-function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}) {
+function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}, onThinking = null) {
   const httpModule = deps.httpModule || http;
   const activeRequests = deps.activeRequests || new Map();
   const inactivityTimeoutMs = deps.inactivityTimeoutMs ?? INACTIVITY_TIMEOUT_MS;
@@ -97,6 +97,87 @@ function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}) {
   const { requestId } = payload;
   let finished = false;
   let inactivityTimer = null;
+
+  // ── <think> tag stream parser ──────────────────────────────────────────────
+  // Tracks whether we are inside a <think>...</think> block.  We need to
+  // buffer partial tag boundaries so that a tag split across two HTTP chunks
+  // (e.g. "<thi" + "nk>") is handled correctly.
+  //
+  // This parser is only used as a fallback when the Ollama server does NOT
+  // emit a native `message.thinking` field (i.e. when `think: true` is not
+  // supported by the running Ollama version or model).
+  let nativeThinkingSeen = false; // set to true once message.thinking arrives
+  let thinkState = 'normal';      // 'normal' | 'in_think'
+  let thinkBuf = '';              // pending text that might be part of a tag
+
+  const OPEN_TAG = '<think>';
+  const CLOSE_TAG = '</think>';
+
+  /**
+   * Feed `text` (a raw content chunk) through the <think> tag state machine.
+   * Emits onThinking() for thinking text and onChunk() for visible text.
+   */
+  function processContentWithTags(text) {
+    if (nativeThinkingSeen || typeof onThinking !== 'function') {
+      onChunk(text);
+      return;
+    }
+
+    thinkBuf += text;
+
+    let out = '';
+    while (thinkBuf.length > 0) {
+      if (thinkState === 'normal') {
+        const openIdx = thinkBuf.indexOf(OPEN_TAG);
+        if (openIdx === -1) {
+          // No open tag — check whether the tail could be the start of <think>
+          const safeLen = Math.max(0, thinkBuf.length - (OPEN_TAG.length - 1));
+          out += thinkBuf.slice(0, safeLen);
+          thinkBuf = thinkBuf.slice(safeLen);
+          break;
+        }
+        // Emit everything before the tag as normal content
+        out += thinkBuf.slice(0, openIdx);
+        thinkBuf = thinkBuf.slice(openIdx + OPEN_TAG.length);
+        thinkState = 'in_think';
+      } else {
+        // in_think
+        const closeIdx = thinkBuf.indexOf(CLOSE_TAG);
+        if (closeIdx === -1) {
+          // Keep a tail buffer in case </think> straddles a chunk boundary
+          const safeLen = Math.max(0, thinkBuf.length - (CLOSE_TAG.length - 1));
+          if (safeLen > 0 && typeof onThinking === 'function') {
+            onThinking(thinkBuf.slice(0, safeLen));
+          }
+          thinkBuf = thinkBuf.slice(safeLen);
+          break;
+        }
+        if (typeof onThinking === 'function') {
+          onThinking(thinkBuf.slice(0, closeIdx));
+        }
+        thinkBuf = thinkBuf.slice(closeIdx + CLOSE_TAG.length);
+        thinkState = 'normal';
+      }
+    }
+
+    if (out) onChunk(out);
+  }
+
+  /**
+   * Flush any remaining buffered text when the stream ends.
+   * At stream end there won't be more chunks, so any partial-tag buffer is
+   * safe to emit as-is.
+   */
+  function flushThinkBuf() {
+    if (!thinkBuf) return;
+    if (thinkState === 'in_think') {
+      if (typeof onThinking === 'function') onThinking(thinkBuf);
+    } else {
+      onChunk(thinkBuf);
+    }
+    thinkBuf = '';
+  }
+  // ──────────────────────────────────────────────────────────────────────────
 
   function cleanup() {
     clearTimeoutFn(inactivityTimer);
@@ -149,10 +230,21 @@ function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}) {
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line);
-          if (parsed.message?.content) onChunk(parsed.message.content);
+
+          // Native thinking field (Ollama >= 0.7.0 + think: true)
+          if (parsed.message?.thinking && typeof onThinking === 'function') {
+            nativeThinkingSeen = true;
+            onThinking(parsed.message.thinking);
+          }
+
+          if (parsed.message?.content) {
+            processContentWithTags(parsed.message.content);
+          }
+
           if (parsed.done && !finished) {
             finished = true;
             cleanup();
+            flushThinkBuf();
             onDone();
           }
         } catch {
@@ -168,10 +260,15 @@ function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}) {
       if (buffer.trim()) {
         try {
           const parsed = JSON.parse(buffer);
-          if (parsed.message?.content && !finished) onChunk(parsed.message.content);
+          if (parsed.message?.thinking && typeof onThinking === 'function' && !finished) {
+            nativeThinkingSeen = true;
+            onThinking(parsed.message.thinking);
+          }
+          if (parsed.message?.content && !finished) processContentWithTags(parsed.message.content);
           if (parsed.done && !finished) {
             finished = true;
             cleanup();
+            flushThinkBuf();
             onDone();
             return;
           }
@@ -183,6 +280,7 @@ function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}) {
       if (!finished) {
         finished = true;
         cleanup();
+        flushThinkBuf();
         onDone();
       }
     });

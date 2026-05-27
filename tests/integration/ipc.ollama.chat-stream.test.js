@@ -41,6 +41,7 @@ describe('ipc ollama:chat', () => {
       expect.any(Function),
       expect.any(Function),
       expect.objectContaining({ activeRequests: expect.any(Map) }),
+      expect.any(Function),
     );
     const chunkCalls = sender.send.mock.calls
       .filter(([channel]) => channel === 'ollama:chat:chunk')
