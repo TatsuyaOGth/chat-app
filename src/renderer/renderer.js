@@ -87,6 +87,8 @@ const leftPaneEl = document.getElementById('left-pane');
 const rightPaneEl = document.getElementById('right-pane');
 const leftPaneToggle = document.getElementById('left-pane-toggle');
 const rightPaneToggle = document.getElementById('right-pane-toggle');
+const leftDivider = document.getElementById('left-divider');
+const rightDivider = document.getElementById('right-divider');
 
 let isWebSearchAvailable = false;
 
@@ -1323,10 +1325,34 @@ function startNewChat() {
 }
 
 // ---------------------------------------------------------------------------
-// Pane collapse
+// Pane collapse and resizing
 // ---------------------------------------------------------------------------
 
 const PANE_STATE_KEY = 'paneCollapsed';
+const PANE_SIZE_KEY = 'paneSizes';
+const MIN_PANE_WIDTH = 150;
+
+let isResizing = false;
+let resizingEdge = null;
+let paneSizes = { left: 220, right: 320 };
+
+function savePaneSizes(left, right) {
+  try {
+    localStorage.setItem(PANE_SIZE_KEY, JSON.stringify({ left, right }));
+  } catch (_) {}
+}
+
+function loadPaneSizes() {
+  let sizes = { left: 220, right: 320 };
+  try {
+    const stored = localStorage.getItem(PANE_SIZE_KEY);
+    if (stored) sizes = JSON.parse(stored);
+  } catch (_) {}
+  paneSizes = sizes;
+  // Apply sizes to CSS variables
+  document.documentElement.style.setProperty('--left-pane-width', `${sizes.left}px`);
+  document.documentElement.style.setProperty('--right-pane-width', `${sizes.right}px`);
+}
 
 function applyPaneState(state) {
   const leftCollapsed = !!state.left;
@@ -1351,6 +1377,44 @@ function togglePane(side) {
   applyPaneState(state);
 }
 
+function startResizing(e, edge) {
+  if (e.button !== 0) return; // Left mouse button only
+  isResizing = true;
+  resizingEdge = edge;
+  e.preventDefault();
+  
+  const divider = edge === 'left' ? leftDivider : rightDivider;
+  divider.classList.add('dragging');
+}
+
+function onResize(e) {
+  if (!isResizing || !resizingEdge) return;
+  
+  const appRect = appEl.getBoundingClientRect();
+  const mouseX = e.clientX;
+  
+  if (resizingEdge === 'left') {
+    const newWidth = Math.max(MIN_PANE_WIDTH, mouseX - appRect.left);
+    paneSizes.left = newWidth;
+    document.documentElement.style.setProperty('--left-pane-width', `${newWidth}px`);
+  } else if (resizingEdge === 'right') {
+    const newWidth = Math.max(MIN_PANE_WIDTH, appRect.right - mouseX);
+    paneSizes.right = newWidth;
+    document.documentElement.style.setProperty('--right-pane-width', `${newWidth}px`);
+  }
+}
+
+function stopResizing() {
+  if (!isResizing) return;
+  isResizing = false;
+  
+  const divider = resizingEdge === 'left' ? leftDivider : rightDivider;
+  divider.classList.remove('dragging');
+  
+  resizingEdge = null;
+  savePaneSizes(paneSizes.left, paneSizes.right);
+}
+
 // ---------------------------------------------------------------------------
 // Event listeners
 // ---------------------------------------------------------------------------
@@ -1359,6 +1423,12 @@ newSessionBtn.addEventListener('click', startNewChat);
 
 leftPaneToggle.addEventListener('click', () => togglePane('left'));
 rightPaneToggle.addEventListener('click', () => togglePane('right'));
+
+// Resizable dividers
+leftDivider.addEventListener('mousedown', (e) => startResizing(e, 'left'));
+rightDivider.addEventListener('mousedown', (e) => startResizing(e, 'right'));
+document.addEventListener('mousemove', onResize);
+document.addEventListener('mouseup', stopResizing);
 
 settingsBtn.addEventListener('click', openSettings);
 settingsCloseBtn.addEventListener('click', closeSettings);
@@ -1407,7 +1477,8 @@ inputForm.addEventListener('submit', (e) => {
   // Initialize markdown rendering
   configureMarked();
 
-  // Restore pane collapse state
+  // Restore pane sizes and collapse state
+  loadPaneSizes();
   let paneState = {};
   try { paneState = JSON.parse(localStorage.getItem(PANE_STATE_KEY) || '{}'); } catch (_) {}
   applyPaneState(paneState);

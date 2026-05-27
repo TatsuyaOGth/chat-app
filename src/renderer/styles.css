@@ -37,6 +37,8 @@
   --right-pane-width: 320px;
   --pane-collapsed-width: 36px;
   --transition: 0.15s ease;
+  --divider-color: #2a2a4a;
+  --divider-hover-color: #4e5a7a;
 }
 
 html,
@@ -59,6 +61,7 @@ body {
   height: 100vh;
   overflow: hidden;
   transition: grid-template-columns var(--transition);
+  position: relative;
 }
 
 #app.left-collapsed {
@@ -170,6 +173,48 @@ body {
   color: var(--color-text-muted);
   padding: 12px;
   font-style: italic;
+}
+
+/* ==========================================================================
+   Resizable dividers
+   ========================================================================== */
+
+.pane-divider {
+  position: absolute;
+  width: 2px;
+  height: 100%;
+  background-color: var(--divider-color);
+  cursor: col-resize;
+  user-select: none;
+  transition: background-color var(--transition);
+  z-index: 10;
+}
+
+#left-divider {
+  left: var(--left-pane-width);
+  transform: translateX(-1px);
+}
+
+#right-divider {
+  right: var(--right-pane-width);
+  transform: translateX(1px);
+}
+
+/* Hide dividers when panes are collapsed */
+#app.left-collapsed #left-divider {
+  display: none;
+}
+
+#app.right-collapsed #right-divider {
+  display: none;
+}
+
+.pane-divider:hover {
+  background-color: var(--divider-hover-color);
+}
+
+.pane-divider.dragging {
+  background-color: var(--color-primary);
 }
 
 /* ==========================================================================
