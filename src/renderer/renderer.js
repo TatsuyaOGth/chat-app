@@ -1,7 +1,7 @@
 'use strict';
 
-const { createGenerationLifecycle } = require('./generation-lifecycle');
-const { subscribeGenerationRouting } = require('./request-routing');
+const { createGenerationLifecycle } = window.GenerationLifecycle;
+const { subscribeGenerationRouting } = window.RequestRouting;
 
 // ---------------------------------------------------------------------------
 // State
@@ -59,6 +59,8 @@ let activeSessionId = null;
 const messagesEl = document.getElementById('messages');
 const inputForm = document.getElementById('input-form');
 const messageInput = document.getElementById('message-input');
+const webSearchToggleWrap = document.getElementById('web-search-toggle-wrap');
+const webSearchToggle = document.getElementById('web-search-toggle');
 const sendBtn = document.getElementById('send-btn');
 const cancelBtn = document.getElementById('cancel-btn');
 const statusBar = document.getElementById('status-bar');
@@ -75,12 +77,18 @@ const presetNameInput = document.getElementById('preset-name-input');
 const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
 const settingsPresetList = document.getElementById('settings-preset-list');
+const tavilyApiKeyInput = document.getElementById('tavily-api-key-input');
+const tavilyApiKeySaveBtn = document.getElementById('tavily-api-key-save-btn');
+const tavilyApiKeyDeleteBtn = document.getElementById('tavily-api-key-delete-btn');
+const tavilyApiKeyStatus = document.getElementById('tavily-api-key-status');
 
 const appEl = document.getElementById('app');
 const leftPaneEl = document.getElementById('left-pane');
 const rightPaneEl = document.getElementById('right-pane');
 const leftPaneToggle = document.getElementById('left-pane-toggle');
 const rightPaneToggle = document.getElementById('right-pane-toggle');
+
+let isWebSearchAvailable = false;
 
 // ─────────────────────────────────────────────────────────────────
 // Markdown Configuration & Rendering
@@ -203,6 +211,16 @@ function setStatus(text, level = 'info') {
   statusBar.className = `status-bar status-bar--${level}`;
 }
 
+function setWebSearchAvailability(configured) {
+  isWebSearchAvailable = !!configured;
+  if (webSearchToggleWrap) {
+    webSearchToggleWrap.hidden = !isWebSearchAvailable;
+  }
+  if (!isWebSearchAvailable && webSearchToggle) {
+    webSearchToggle.checked = false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -322,8 +340,103 @@ function renderEditor() {
 // Settings modal
 // ---------------------------------------------------------------------------
 
+function setTavilyStatus(text, level = 'info') {
+  if (!tavilyApiKeyStatus) return;
+  tavilyApiKeyStatus.textContent = text;
+  tavilyApiKeyStatus.className = 'tavily-settings__status';
+  if (level === 'ok') tavilyApiKeyStatus.classList.add('tavily-settings__status--ok');
+  if (level === 'warn') tavilyApiKeyStatus.classList.add('tavily-settings__status--warn');
+  if (level === 'error') tavilyApiKeyStatus.classList.add('tavily-settings__status--error');
+}
+
+async function loadTavilyConfigStatus() {
+  if (!window.tavily || !tavilyApiKeyInput) {
+    setWebSearchAvailability(false);
+    return;
+  }
+  setTavilyStatus('読み込み中…');
+  try {
+    const { configured, source, error } = await window.tavily.getConfigStatus();
+    setWebSearchAvailability(configured);
+    if (error) {
+      setTavilyStatus(`状態取得エラー: ${error}`, 'error');
+      return;
+    }
+
+    if (!configured) {
+      tavilyApiKeyInput.value = '';
+      tavilyApiKeyInput.placeholder = 'tvly-...';
+      setTavilyStatus('未設定です', 'warn');
+      return;
+    }
+
+    tavilyApiKeyInput.value = '';
+    tavilyApiKeyInput.placeholder = source === 'env'
+      ? '環境変数で設定済み（TAVILY_API_KEY）'
+      : '保存済み（userData/tavily-config.json）';
+    setTavilyStatus(source === 'env' ? '環境変数で設定済みです' : '設定ファイルに保存済みです', 'ok');
+  } catch (err) {
+    setWebSearchAvailability(false);
+    setTavilyStatus(`状態取得エラー: ${err.message || String(err)}`, 'error');
+  }
+}
+
+async function saveTavilyApiKeyFromSettings() {
+  if (!window.tavily || !tavilyApiKeyInput) return;
+  const apiKey = tavilyApiKeyInput.value.trim();
+  if (!apiKey) {
+    setTavilyStatus('API Key を入力してください', 'warn');
+    tavilyApiKeyInput.focus();
+    return;
+  }
+
+  tavilyApiKeySaveBtn.disabled = true;
+  setTavilyStatus('保存中…');
+  try {
+    const { ok, error } = await window.tavily.saveApiKey(apiKey);
+    if (!ok) {
+      setTavilyStatus(`保存エラー: ${error || '不明なエラー'}`, 'error');
+      return;
+    }
+
+    tavilyApiKeyInput.value = '';
+    await loadTavilyConfigStatus();
+    setTavilyStatus('保存しました（userData/tavily-config.json）', 'ok');
+  } catch (err) {
+    setTavilyStatus(`保存エラー: ${err.message || String(err)}`, 'error');
+  } finally {
+    tavilyApiKeySaveBtn.disabled = false;
+  }
+}
+
+async function deleteTavilyApiKeyFromSettings() {
+  if (!window.tavily) return;
+
+  const confirmed = await window.app.confirm('保存済みの Tavily API Key を削除しますか？');
+  if (!confirmed) return;
+
+  tavilyApiKeyDeleteBtn.disabled = true;
+  setTavilyStatus('削除中…');
+  try {
+    const { ok, error } = await window.tavily.deleteApiKey();
+    if (!ok) {
+      setTavilyStatus(`削除エラー: ${error || '不明なエラー'}`, 'error');
+      return;
+    }
+
+    tavilyApiKeyInput.value = '';
+    await loadTavilyConfigStatus();
+    setTavilyStatus('保存済み API Key を削除しました', 'ok');
+  } catch (err) {
+    setTavilyStatus(`削除エラー: ${err.message || String(err)}`, 'error');
+  } finally {
+    tavilyApiKeyDeleteBtn.disabled = false;
+  }
+}
+
 function openSettings() {
   renderSettingsPresetList();
+  loadTavilyConfigStatus();
   if (typeof settingsModal.showModal === 'function') {
     settingsModal.showModal();
   } else {
@@ -631,6 +744,76 @@ function appendMessage(role, initialText) {
   return wrapper; // return the whole wrapper so callers can attach extras
 }
 
+function upsertSearchInfoPanel(wrapper, payload) {
+  if (!payload) return;
+  const summaryText = typeof payload.summary === 'string' ? payload.summary.trim() : '';
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  if (!summaryText && results.length === 0) return;
+
+  let details = wrapper.querySelector('.search-info');
+  if (!details) {
+    details = document.createElement('details');
+    details.classList.add('search-info');
+
+    const summary = document.createElement('summary');
+    summary.classList.add('search-info__toggle');
+    summary.textContent = '検索結果と要約';
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.classList.add('search-info__body');
+    details.appendChild(body);
+
+    wrapper.appendChild(details);
+  }
+
+  const bodyEl = details.querySelector('.search-info__body');
+  if (!bodyEl) return;
+  bodyEl.innerHTML = '';
+
+  if (summaryText) {
+    const summaryHeading = document.createElement('p');
+    summaryHeading.classList.add('search-info__heading');
+    summaryHeading.textContent = '要約';
+    bodyEl.appendChild(summaryHeading);
+
+    const summaryContent = document.createElement('pre');
+    summaryContent.classList.add('search-info__summary');
+    summaryContent.textContent = summaryText;
+    bodyEl.appendChild(summaryContent);
+  }
+
+  if (results.length > 0) {
+    const listHeading = document.createElement('p');
+    listHeading.classList.add('search-info__heading');
+    listHeading.textContent = '検索結果';
+    bodyEl.appendChild(listHeading);
+
+    const list = document.createElement('ol');
+    list.classList.add('search-info__list');
+    for (const item of results) {
+      const li = document.createElement('li');
+      li.classList.add('search-info__item');
+
+      const title = document.createElement('a');
+      title.classList.add('search-info__link');
+      title.textContent = item.title || item.url || '(no title)';
+      title.href = item.url || '#';
+      title.target = '_blank';
+      title.rel = 'noreferrer noopener';
+
+      const snippet = document.createElement('p');
+      snippet.classList.add('search-info__snippet');
+      snippet.textContent = item.snippet || '(snippet unavailable)';
+
+      li.appendChild(title);
+      li.appendChild(snippet);
+      list.appendChild(li);
+    }
+    bodyEl.appendChild(list);
+  }
+}
+
 function getChatRequestParams() {
   const { model, system, options } = window.Params.splitParamsForChat(workingParams);
   if (!model) {
@@ -895,13 +1078,27 @@ function updateSendButton() {
   sendBtn.disabled = !hasText || !hasModel || isGenerating;
 }
 
-async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot }) {
+function statusTextForStage(stage, fallback) {
+  if (fallback && fallback.trim()) return fallback;
+  switch (stage) {
+    case 'search':
+      return 'ウェブ検索中…';
+    case 'summarize':
+      return '検索結果を要約中…';
+    case 'generating':
+      return '回答を生成中…';
+    default:
+      return '生成中…';
+  }
+}
+
+async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot, webSearchEnabled }) {
   const assistantWrapper = appendMessage('assistant', '');
   const assistantContent = assistantWrapper.querySelector('.message__content');
   isGenerating = true;
   sendBtn.disabled = true;
   cancelBtn.style.display = '';
-  setStatus('生成中…');
+  setStatus(webSearchEnabled ? 'ウェブ検索を開始中…' : '生成中…');
 
   // Thinking indicator — shown until first content chunk arrives.
   const thinkingEl = createThinkingIndicator();
@@ -928,6 +1125,12 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     requestId,
     onChunk: (data) => lifecycle.handleChunk(data),
     onError: (data) => lifecycle.handleError(data),
+    onProgress: (data) => {
+      setStatus(statusTextForStage(data.stage, data.message));
+    },
+    onSearchInfo: (data) => {
+      upsertSearchInfoPanel(assistantWrapper, data);
+    },
   });
 
   lifecycle = createGenerationLifecycle({
@@ -989,6 +1192,8 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     },
     unsubChunk: routing.unsubChunk,
     unsubError: routing.unsubError,
+    unsubProgress: routing.unsubProgress,
+    unsubSearchInfo: routing.unsubSearchInfo,
   });
 
   window.ollama.checkLoaded(model).then(({ loaded }) => {
@@ -1004,6 +1209,7 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     messages: messagesForRequest(),
     system,
     options,
+    webSearchEnabled,
   });
 }
 
@@ -1017,6 +1223,7 @@ async function sendMessage() {
   // Snapshot the params at the moment generation starts, so edits made during
   // the response don't leak into this assistant turn's audit trail.
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
+  const webSearchEnabled = isWebSearchAvailable && !!(webSearchToggle && webSearchToggle.checked);
 
   // Render user message
   const userMsg = { role: 'user', content: text };
@@ -1050,6 +1257,7 @@ async function sendMessage() {
     sessionId,
     ...chatParams,
     paramsSnapshot,
+    webSearchEnabled,
   });
 }
 
@@ -1116,6 +1324,14 @@ settingsModal.addEventListener('click', (e) => {
 presetSelect.addEventListener('change', () => selectPreset(presetSelect.value));
 savePresetBtn.addEventListener('click', savePresetOverwrite);
 newPresetBtn.addEventListener('click', savePresetAsNew);
+tavilyApiKeySaveBtn.addEventListener('click', saveTavilyApiKeyFromSettings);
+tavilyApiKeyDeleteBtn.addEventListener('click', deleteTavilyApiKeyFromSettings);
+tavilyApiKeyInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveTavilyApiKeyFromSettings();
+  }
+});
 
 cancelBtn.addEventListener('click', () => {
   if (currentRequestId !== null) {
@@ -1151,6 +1367,7 @@ inputForm.addEventListener('submit', (e) => {
   applyPaneState(paneState);
 
   renderEditor();
+  await loadTavilyConfigStatus();
   await Promise.all([loadModels(), loadPresets(), loadSessions()]);
   messageInput.focus();
 })();

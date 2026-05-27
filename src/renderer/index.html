@@ -59,6 +59,17 @@
             rows="3"
             aria-label="メッセージ入力"
           ></textarea>
+          <label
+            id="web-search-toggle-wrap"
+            for="web-search-toggle"
+            class="search-toggle"
+            title="ウェブ検索を有効にする"
+            aria-label="ウェブ検索を有効にする"
+            hidden
+          >
+            <input id="web-search-toggle" class="search-toggle__input" type="checkbox" />
+            <span class="search-toggle__icon" aria-hidden="true">🌐</span>
+          </label>
           <button id="send-btn" type="submit" class="btn btn-primary" disabled>送信</button>
           <button id="cancel-btn" type="button" class="btn btn-secondary" style="display:none" aria-label="生成を停止">停止</button>
         </form>
@@ -127,6 +138,33 @@
           </p>
           <ul id="settings-preset-list" class="preset-list" aria-label="プリセット一覧"></ul>
         </section>
+
+        <section class="settings-section settings-section--tavily">
+          <h3 class="settings-section__heading">Tavily API Key</h3>
+          <p class="settings-section__hint">
+            入力して保存すると userData 配下の tavily-config.json を作成または上書きします。
+          </p>
+
+          <div class="tavily-settings">
+            <label for="tavily-api-key-input" class="label">API Key</label>
+            <input
+              id="tavily-api-key-input"
+              class="tavily-settings__input"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="tvly-..."
+              aria-label="Tavily API Key"
+            />
+            <button id="tavily-api-key-save-btn" type="button" class="btn btn-secondary tavily-settings__save-btn">
+              保存
+            </button>
+            <button id="tavily-api-key-delete-btn" type="button" class="btn btn-danger tavily-settings__delete-btn">
+              削除
+            </button>
+            <p id="tavily-api-key-status" class="tavily-settings__status" aria-live="polite"></p>
+          </div>
+        </section>
       </form>
     </dialog>
 
@@ -136,6 +174,8 @@
     <script src="vendor/highlight.min.js"></script>
 
     <script src="params.js"></script>
+    <script src="request-routing.js"></script>
+    <script src="generation-lifecycle.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

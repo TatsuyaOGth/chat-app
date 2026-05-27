@@ -1,42 +1,73 @@
 'use strict';
 
-function subscribeGenerationRouting({ ollama, requestId, onChunk, onError }) {
-  const unsubChunkRaw = ollama.onChatChunk((data) => {
-    if (data.requestId !== requestId) return;
-    onChunk(data);
-  });
+(function initRequestRouting(root, factory) {
+  const api = factory();
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = api;
+  }
+  root.RequestRouting = api;
+})(typeof globalThis !== 'undefined' ? globalThis : window, () => {
+  function subscribeGenerationRouting({ ollama, requestId, onChunk, onError, onProgress, onSearchInfo }) {
+    const unsubChunkRaw = ollama.onChatChunk((data) => {
+      if (data.requestId !== requestId) return;
+      onChunk(data);
+    });
 
-  const unsubErrorRaw = ollama.onChatError((data) => {
-    if (data.requestId !== requestId) return;
-    onError(data);
-  });
+    const unsubErrorRaw = ollama.onChatError((data) => {
+      if (data.requestId !== requestId) return;
+      onError(data);
+    });
 
-  let unsubscribed = false;
+    const unsubProgressRaw = typeof onProgress === 'function'
+      ? ollama.onChatProgress((data) => {
+        if (data.requestId !== requestId) return;
+        onProgress(data);
+      })
+      : () => {};
 
-  const unsubChunk = () => {
-    if (unsubscribed) return;
-    unsubChunkRaw();
-  };
+    const unsubSearchInfoRaw = typeof onSearchInfo === 'function'
+      ? ollama.onChatSearchInfo((data) => {
+        if (data.requestId !== requestId) return;
+        onSearchInfo(data);
+      })
+      : () => {};
 
-  const unsubError = () => {
-    if (unsubscribed) return;
-    unsubErrorRaw();
-  };
+    let unsubscribed = false;
 
-  const unsubscribeAll = () => {
-    if (unsubscribed) return;
-    unsubscribed = true;
-    unsubChunkRaw();
-    unsubErrorRaw();
-  };
+    const unsubChunk = () => {
+      if (unsubscribed) return;
+      unsubChunkRaw();
+    };
+
+    const unsubError = () => {
+      if (unsubscribed) return;
+      unsubErrorRaw();
+    };
+
+    const unsubProgress = () => {
+      if (unsubscribed) return;
+      unsubProgressRaw();
+    };
+
+    const unsubscribeAll = () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      unsubChunkRaw();
+      unsubErrorRaw();
+      unsubProgressRaw();
+      unsubSearchInfoRaw();
+    };
+
+    return {
+      unsubChunk,
+      unsubError,
+      unsubProgress,
+      unsubSearchInfo: unsubSearchInfoRaw,
+      unsubscribeAll,
+    };
+  }
 
   return {
-    unsubChunk,
-    unsubError,
-    unsubscribeAll,
+    subscribeGenerationRouting,
   };
-}
-
-module.exports = {
-  subscribeGenerationRouting,
-};
+});

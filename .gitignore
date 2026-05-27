@@ -69,6 +69,10 @@ web_modules/
 .env
 .env.*
 !.env.example
+.env.local
+
+# Local secret config (optional local override; do not commit)
+tavily-config.json
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

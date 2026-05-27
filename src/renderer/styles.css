@@ -721,6 +721,95 @@ body {
   font-style: italic;
 }
 
+.search-info {
+  margin-top: 6px;
+  align-self: stretch;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.search-info__toggle {
+  list-style: none;
+  cursor: pointer;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: rgba(255, 255, 255, 0.01);
+  user-select: none;
+}
+
+.search-info__toggle::-webkit-details-marker {
+  display: none;
+}
+
+.search-info__toggle::before {
+  content: '▶';
+  margin-right: 6px;
+  color: var(--color-primary);
+}
+
+.search-info[open] .search-info__toggle::before {
+  content: '▼';
+}
+
+.search-info__body {
+  border-top: 1px solid var(--color-border);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.search-info__heading {
+  font-size: 12px;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.search-info__summary {
+  margin: 0;
+  padding: 8px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+
+.search-info__list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.search-info__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.search-info__link {
+  color: var(--color-primary-hover);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.search-info__link:hover {
+  text-decoration: underline;
+}
+
+.search-info__snippet {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
 .input-form {
   display: flex;
   gap: 8px;
@@ -751,6 +840,54 @@ body {
 
 .message-input::placeholder {
   color: var(--color-text-muted);
+}
+
+.search-toggle {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--transition), background var(--transition), transform var(--transition);
+}
+
+.search-toggle:hover {
+  background: var(--color-secondary-hover);
+}
+
+.search-toggle__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.search-toggle__icon {
+  font-size: 18px;
+  line-height: 1;
+  filter: grayscale(0.65);
+  opacity: 0.9;
+}
+
+.search-toggle__input:checked + .search-toggle__icon {
+  filter: none;
+  opacity: 1;
+}
+
+.search-toggle:has(.search-toggle__input:checked) {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 20%, var(--color-secondary));
+}
+
+.search-toggle:has(.search-toggle__input:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 #cancel-btn {
@@ -1385,6 +1522,62 @@ details[open] > .param-group__heading::before {
   background: var(--color-error);
   color: #fff;
   border-color: var(--color-error);
+}
+
+.settings-section--tavily {
+  border-top: 1px solid var(--color-border);
+}
+
+.tavily-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tavily-settings__input {
+  width: 100%;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  outline: none;
+}
+
+.tavily-settings__input:focus {
+  border-color: var(--color-primary);
+}
+
+.tavily-settings__save-btn {
+  width: auto;
+  align-self: flex-start;
+  padding: 6px 16px;
+}
+
+.tavily-settings__delete-btn {
+  width: auto;
+  align-self: flex-start;
+  padding: 6px 16px;
+}
+
+.tavily-settings__status {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  min-height: 18px;
+}
+
+.tavily-settings__status--ok {
+  color: #6bcf8f;
+}
+
+.tavily-settings__status--warn {
+  color: var(--color-warn);
+}
+
+.tavily-settings__status--error {
+  color: var(--color-error);
 }
 
 /* ==========================================================================
