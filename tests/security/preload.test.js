@@ -32,7 +32,7 @@ describe('preload bridge', () => {
   });
 
   test('想定した API だけを公開する', () => {
-    expect(Array.from(mockExposures.keys()).sort()).toEqual(['app', 'ollama', 'presets', 'sessions']);
+    expect(Array.from(mockExposures.keys()).sort()).toEqual(['app', 'ollama', 'presets', 'sessions', 'tavily']);
   });
 
   test('ollama API が正しい IPC チャネルへ転送する', () => {
@@ -51,8 +51,21 @@ describe('preload bridge', () => {
       messages: [],
       system: undefined,
       options: undefined,
+      webSearchEnabled: undefined,
     });
     expect(mockSend).toHaveBeenNthCalledWith(2, 'ollama:chat:cancel', { requestId: 'req-1' });
+  });
+
+  test('tavily API が正しい IPC チャネルへ転送する', () => {
+    const tavily = mockExposures.get('tavily');
+
+    tavily.getConfigStatus();
+    tavily.saveApiKey('tvly-test-key');
+    tavily.deleteApiKey();
+
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'tavily:get-config-status');
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'tavily:save-api-key', 'tvly-test-key');
+    expect(mockInvoke).toHaveBeenNthCalledWith(3, 'tavily:delete-api-key');
   });
 
   test('stream listener の unsubscribe が removeListener を呼ぶ', () => {

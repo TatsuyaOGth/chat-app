@@ -22,11 +22,6 @@ const filesToCopy = [
     path.join(nodeModules, 'marked', 'marked.min.js'),
     path.join(vendorDir, 'marked.min.js')
   ],
-  // highlight.js (Syntax highlighting)
-  [
-    path.join(nodeModules, 'highlight.js', 'lib', 'index.js'),
-    path.join(vendorDir, 'highlight.min.js')
-  ],
   // highlight.js theme (github-dark)
   [
     path.join(nodeModules, 'highlight.js', 'styles', 'github-dark.min.css'),
@@ -59,6 +54,21 @@ filesToCopy.forEach(([src, dest]) => {
     errorCount++;
   }
 });
+
+// highlight.js browser shim
+// NOTE: highlight.js npm package provides Node/CommonJS entry points by default.
+// This shim keeps the renderer browser-safe (no require) and falls back to
+// escaped code rendering when full highlight.js browser assets are unavailable.
+const highlightShimPath = path.join(vendorDir, 'highlight.min.js');
+const highlightShim = `'use strict';\n(function initHljsShim(global){\n  function escapeHtml(str){\n    return String(str)\n      .replace(/&/g, '&amp;')\n      .replace(/</g, '&lt;')\n      .replace(/>/g, '&gt;')\n      .replace(/\"/g, '&quot;')\n      .replace(/'/g, '&#39;');\n  }\n\n  const hljs = {\n    getLanguage(){\n      return true;\n    },\n    highlight(code){\n      return { value: escapeHtml(code) };\n    },\n    highlightAuto(code){\n      return { value: escapeHtml(code) };\n    },\n  };\n\n  global.hljs = hljs;\n})(typeof globalThis !== 'undefined' ? globalThis : window);\n`;
+
+try {
+  fs.writeFileSync(highlightShimPath, highlightShim, 'utf8');
+  console.log('✓ Generated: highlight.min.js (browser shim)');
+} catch (err) {
+  console.error('✗ Failed to generate highlight.min.js:', err.message);
+  errorCount++;
+}
 
 // Summary
 console.log(`\n──────────────────────────────────────`);
