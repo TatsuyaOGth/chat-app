@@ -1127,6 +1127,13 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     onError: (data) => lifecycle.handleError(data),
     onProgress: (data) => {
       setStatus(statusTextForStage(data.stage, data.message));
+      if (data.stage === 'generating') {
+        const label = lifecycle.updateThinkingLabel(true);
+        if (label) {
+          const labelEl = thinkingEl.querySelector('.thinking-indicator__label');
+          if (labelEl) labelEl.textContent = label;
+        }
+      }
     },
     onSearchInfo: (data) => {
       upsertSearchInfoPanel(assistantWrapper, data);
