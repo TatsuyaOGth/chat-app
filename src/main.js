@@ -18,6 +18,16 @@ const TAVILY_API_URL = 'https://api.tavily.com/search';
 const TAVILY_TIMEOUT_MS = 12_000;
 const TAVILY_CONFIG_FILENAME = 'tavily-config.json';
 const OLLAMA_SUMMARY_TIMEOUT_MS = 300_000;
+const OLLAMA_TEST_CONNECTION_TIMEOUT_MS = 5_000;
+
+function isValidOllamaBaseUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 function getTavilyConfigPath() {
   return path.join(app.getPath('userData'), TAVILY_CONFIG_FILENAME);
@@ -259,7 +269,7 @@ function normalizeTavilyResults(raw, { recencyDays } = {}) {
   };
 }
 
-async function summarizeSearchResultsWithModel(model, query, searchData) {
+async function summarizeSearchResultsWithModel(model, query, searchData, baseUrl) {
   const lines = searchData.results.map((r, idx) => (
     `${idx + 1}. ${r.title}\nURL: ${r.url}\n要約: ${r.snippet}`
   ));
@@ -294,6 +304,7 @@ async function summarizeSearchResultsWithModel(model, query, searchData) {
       num_predict: 220,
     },
   }, {
+    baseUrl,
     requestTimeoutMs: OLLAMA_SUMMARY_TIMEOUT_MS,
   });
 
@@ -351,7 +362,8 @@ function mergeSystemWithSearchSummary(system, summary, searchData) {
 /** Returns a list of locally available Ollama models. */
 ipcMain.handle('ollama:get-models', async () => {
   try {
-    const result = await ollamaRequest('GET', '/api/tags', null);
+    const { baseUrl } = storage.ollamaConfig.get();
+    const result = await ollamaRequest('GET', '/api/tags', null, { baseUrl });
     return { models: (result.models || []).map((m) => m.name) };
   } catch (err) {
     return { models: [], error: err.message };
@@ -364,12 +376,50 @@ ipcMain.handle('ollama:get-models', async () => {
  */
 ipcMain.handle('ollama:check-loaded', async (_event, model) => {
   try {
-    const result = await ollamaRequest('GET', '/api/ps', null);
+    const { baseUrl } = storage.ollamaConfig.get();
+    const result = await ollamaRequest('GET', '/api/ps', null, { baseUrl });
     const running = result.models || [];
     const loaded = running.some((m) => m.name === model || m.model === model);
     return { loaded };
   } catch {
     return { loaded: false };
+  }
+});
+
+/** Returns the currently configured Ollama connection ({ baseUrl }). */
+ipcMain.handle('ollama:get-config', () => storage.ollamaConfig.get());
+
+/**
+ * Save the Ollama base URL. Validates the URL format only — persisting
+ * succeeds independently of whether the server is actually reachable, so
+ * users can configure a remote machine before it's running.
+ */
+ipcMain.handle('ollama:set-config', (_event, baseUrl) => {
+  const trimmed = String(baseUrl || '').trim();
+  if (!isValidOllamaBaseUrl(trimmed)) {
+    return { ok: false, error: 'http:// または https:// で始まる正しいURLを入力してください' };
+  }
+  const saved = storage.ollamaConfig.set(trimmed);
+  return { ok: true, baseUrl: saved.baseUrl };
+});
+
+/**
+ * Test connectivity to an Ollama server via GET /api/tags.
+ * Uses the given baseUrl, or falls back to the saved config when omitted.
+ */
+ipcMain.handle('ollama:test-connection', async (_event, baseUrl) => {
+  const target = baseUrl ? String(baseUrl).trim() : storage.ollamaConfig.get().baseUrl;
+  if (!isValidOllamaBaseUrl(target)) {
+    return { ok: false, error: '不正なURLです' };
+  }
+  try {
+    const result = await ollamaRequest('GET', '/api/tags', null, {
+      baseUrl: target,
+      requestTimeoutMs: OLLAMA_TEST_CONNECTION_TIMEOUT_MS,
+    });
+    return { ok: true, modelCount: (result.models || []).length };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
   }
 });
 
@@ -393,6 +443,7 @@ ipcMain.on('ollama:chat', (event, payload) => {
     system,
     options,
     webSearchEnabled = false,
+    reasoningEnabled,
   } = payload;
 
   let cancelled = false;
@@ -419,6 +470,7 @@ ipcMain.on('ollama:chat', (event, payload) => {
   });
 
   (async () => {
+    const { baseUrl } = storage.ollamaConfig.get();
     let effectiveSystem = system;
 
     if (webSearchEnabled) {
@@ -468,7 +520,7 @@ ipcMain.on('ollama:chat', (event, payload) => {
         if (normalized.answer || normalized.results.length > 0) {
           send('ollama:chat:progress', { requestId, stage: 'summarize', message: '検索結果を要約中…' });
           try {
-            const summary = await summarizeSearchResultsWithModel(model, query, normalized);
+            const summary = await summarizeSearchResultsWithModel(model, query, normalized, baseUrl);
             if (!cancelled) {
               const mergedSummary = summary || buildFallbackSummaryFromSearchData(query, normalized);
               effectiveSystem = mergeSystemWithSearchSummary(system, mergedSummary, normalized);
@@ -497,11 +549,11 @@ ipcMain.on('ollama:chat', (event, payload) => {
 
     send('ollama:chat:progress', { requestId, stage: 'generating', message: '回答を生成中…' });
     ollamaChatStream(
-      { requestId, model, messages, system: effectiveSystem, options },
+      { requestId, model, messages, system: effectiveSystem, options, think: reasoningEnabled },
       (content) => send('ollama:chat:chunk', { requestId, content, done: false }),
       () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
       (err) => send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' }),
-      { activeRequests },
+      { activeRequests, baseUrl },
       (thinking) => send('ollama:chat:thinking', { requestId, thinking }),
     );
   })().catch((err) => {

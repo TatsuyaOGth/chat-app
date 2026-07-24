@@ -1623,6 +1623,57 @@ details[open] > .param-group__heading::before {
   border-color: var(--color-error);
 }
 
+.settings-section--ollama {
+  border-top: 1px solid var(--color-border);
+}
+
+.ollama-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ollama-settings__input {
+  width: 100%;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  outline: none;
+}
+
+.ollama-settings__input:focus {
+  border-color: var(--color-primary);
+}
+
+.ollama-settings__save-btn,
+.ollama-settings__reset-btn {
+  width: auto;
+  align-self: flex-start;
+  padding: 6px 16px;
+}
+
+.ollama-settings__status {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  min-height: 18px;
+}
+
+.ollama-settings__status--ok {
+  color: #6bcf8f;
+}
+
+.ollama-settings__status--warn {
+  color: var(--color-warn);
+}
+
+.ollama-settings__status--error {
+  color: var(--color-error);
+}
+
 .settings-section--tavily {
   border-top: 1px solid var(--color-border);
 }

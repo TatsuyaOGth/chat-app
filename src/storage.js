@@ -24,6 +24,13 @@ const sessionsStore = new Store({
   defaults: { items: [] },
 });
 
+const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
+
+const ollamaConfigStore = new Store({
+  name: 'ollama-config',
+  defaults: { baseUrl: OLLAMA_DEFAULT_BASE_URL },
+});
+
 // Migrate from the old templates store name.
 const legacyTemplatesStore = new Store({
   name: 'templates',
@@ -105,6 +112,20 @@ function reorderPresets(orderedIds) {
 }
 
 // ---------------------------------------------------------------------------
+// Ollama connection config
+// ---------------------------------------------------------------------------
+
+function getOllamaConfig() {
+  return { baseUrl: ollamaConfigStore.get('baseUrl') };
+}
+
+function setOllamaConfig(baseUrl) {
+  const trimmed = String(baseUrl || '').trim();
+  ollamaConfigStore.set('baseUrl', trimmed || OLLAMA_DEFAULT_BASE_URL);
+  return getOllamaConfig();
+}
+
+// ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
 
@@ -173,6 +194,10 @@ module.exports = {
     update: updatePreset,
     delete: deletePreset,
     reorder: reorderPresets,
+  },
+  ollamaConfig: {
+    get: getOllamaConfig,
+    set: setOllamaConfig,
   },
   sessions: {
     list: listSessions,

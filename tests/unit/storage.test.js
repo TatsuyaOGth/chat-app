@@ -63,6 +63,24 @@ describe('storage', () => {
     expect(storage.presets.get(first.id)).toBeNull();
   });
 
+  test('ollamaConfig はデフォルトで localhost、set で永続化される', () => {
+    storage = require('../../src/storage');
+
+    expect(storage.ollamaConfig.get()).toEqual({ baseUrl: 'http://localhost:11434' });
+
+    const updated = storage.ollamaConfig.set('http://192.168.1.50:11434');
+    expect(updated).toEqual({ baseUrl: 'http://192.168.1.50:11434' });
+    expect(storage.ollamaConfig.get()).toEqual({ baseUrl: 'http://192.168.1.50:11434' });
+  });
+
+  test('ollamaConfig.set は空文字だとデフォルトにフォールバックする', () => {
+    storage = require('../../src/storage');
+
+    storage.ollamaConfig.set('http://192.168.1.50:11434');
+    const reset = storage.ollamaConfig.set('  ');
+    expect(reset).toEqual({ baseUrl: 'http://localhost:11434' });
+  });
+
   test('session を create append update delete できる', () => {
     storage = require('../../src/storage');
 
