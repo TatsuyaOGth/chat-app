@@ -61,6 +61,7 @@ const inputForm = document.getElementById('input-form');
 const messageInput = document.getElementById('message-input');
 const webSearchToggleWrap = document.getElementById('web-search-toggle-wrap');
 const webSearchToggle = document.getElementById('web-search-toggle');
+const reasoningToggle = document.getElementById('reasoning-toggle');
 const sendBtn = document.getElementById('send-btn');
 const cancelBtn = document.getElementById('cancel-btn');
 const statusBar = document.getElementById('status-bar');
@@ -77,6 +78,10 @@ const presetNameInput = document.getElementById('preset-name-input');
 const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
 const settingsPresetList = document.getElementById('settings-preset-list');
+const ollamaBaseUrlInput = document.getElementById('ollama-base-url-input');
+const ollamaBaseUrlSaveBtn = document.getElementById('ollama-base-url-save-btn');
+const ollamaBaseUrlResetBtn = document.getElementById('ollama-base-url-reset-btn');
+const ollamaBaseUrlStatus = document.getElementById('ollama-base-url-status');
 const tavilyApiKeyInput = document.getElementById('tavily-api-key-input');
 const tavilyApiKeySaveBtn = document.getElementById('tavily-api-key-save-btn');
 const tavilyApiKeyDeleteBtn = document.getElementById('tavily-api-key-delete-btn');
@@ -223,6 +228,19 @@ function setWebSearchAvailability(configured) {
   }
 }
 
+/**
+ * Read the current state of the input-row toggles. Called fresh at the
+ * moment a generation starts (initial send or edit-and-resend) so both
+ * paths honor whatever the user has toggled right now, rather than one of
+ * them silently falling back to defaults.
+ */
+function getGenerationToggles() {
+  return {
+    webSearchEnabled: isWebSearchAvailable && !!(webSearchToggle && webSearchToggle.checked),
+    reasoningEnabled: !reasoningToggle || reasoningToggle.checked,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -342,6 +360,84 @@ function renderEditor() {
 // Settings modal
 // ---------------------------------------------------------------------------
 
+const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
+
+function setOllamaStatus(text, level = 'info') {
+  if (!ollamaBaseUrlStatus) return;
+  ollamaBaseUrlStatus.textContent = text;
+  ollamaBaseUrlStatus.className = 'ollama-settings__status';
+  if (level === 'ok') ollamaBaseUrlStatus.classList.add('ollama-settings__status--ok');
+  if (level === 'warn') ollamaBaseUrlStatus.classList.add('ollama-settings__status--warn');
+  if (level === 'error') ollamaBaseUrlStatus.classList.add('ollama-settings__status--error');
+}
+
+async function loadOllamaConfig() {
+  if (!window.ollama || !ollamaBaseUrlInput) return;
+  try {
+    const { baseUrl } = await window.ollama.getConfig();
+    ollamaBaseUrlInput.value = baseUrl || OLLAMA_DEFAULT_BASE_URL;
+    setOllamaStatus('');
+  } catch (err) {
+    setOllamaStatus(`状態取得エラー: ${err.message || String(err)}`, 'error');
+  }
+}
+
+/**
+ * Incremented on every call to saveOllamaBaseUrlFromSettings(). A call
+ * captures its own token and checks it against this counter before each
+ * UI-visible side effect, so that a slow/older call (e.g. a connection test
+ * against an unreachable host) can't overwrite the status shown by a newer
+ * call started in the meantime (via the reset button or repeated Enter,
+ * neither of which is blocked by the save button's disabled state).
+ */
+let ollamaConfigSaveToken = 0;
+
+async function saveOllamaBaseUrlFromSettings() {
+  if (!window.ollama || !ollamaBaseUrlInput) return;
+  const url = ollamaBaseUrlInput.value.trim();
+  if (!url) {
+    setOllamaStatus('URL を入力してください', 'warn');
+    ollamaBaseUrlInput.focus();
+    return;
+  }
+
+  const token = ++ollamaConfigSaveToken;
+  const isStale = () => token !== ollamaConfigSaveToken;
+
+  ollamaBaseUrlSaveBtn.disabled = true;
+  setOllamaStatus('保存中…');
+  try {
+    const { ok, error, baseUrl } = await window.ollama.setConfig(url);
+    if (isStale()) return;
+    if (!ok) {
+      setOllamaStatus(`保存エラー: ${error || '不明なエラー'}`, 'error');
+      return;
+    }
+    ollamaBaseUrlInput.value = baseUrl;
+
+    setOllamaStatus('接続を確認中…');
+    const test = await window.ollama.testConnection(baseUrl);
+    if (isStale()) return;
+    if (test.ok) {
+      setOllamaStatus(`保存しました（接続成功・モデル${test.modelCount}件）`, 'ok');
+    } else {
+      setOllamaStatus(`保存しました（接続確認に失敗: ${test.error || '不明なエラー'}）`, 'warn');
+    }
+
+    await loadModels();
+  } catch (err) {
+    if (!isStale()) setOllamaStatus(`保存エラー: ${err.message || String(err)}`, 'error');
+  } finally {
+    if (!isStale()) ollamaBaseUrlSaveBtn.disabled = false;
+  }
+}
+
+function resetOllamaBaseUrlToLocal() {
+  if (!ollamaBaseUrlInput) return;
+  ollamaBaseUrlInput.value = OLLAMA_DEFAULT_BASE_URL;
+  saveOllamaBaseUrlFromSettings();
+}
+
 function setTavilyStatus(text, level = 'info') {
   if (!tavilyApiKeyStatus) return;
   tavilyApiKeyStatus.textContent = text;
@@ -438,6 +534,7 @@ async function deleteTavilyApiKeyFromSettings() {
 
 function openSettings() {
   renderSettingsPresetList();
+  loadOllamaConfig();
   loadTavilyConfigStatus();
   if (typeof settingsModal.showModal === 'function') {
     settingsModal.showModal();
@@ -1017,10 +1114,13 @@ async function applyPromptEdit(userMsg, wrapper, nextText) {
   const chatParams = getChatRequestParams();
   if (!chatParams) return;
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
+  const { webSearchEnabled, reasoningEnabled } = getGenerationToggles();
   await startAssistantGeneration({
     sessionId: activeSessionId,
     ...chatParams,
     paramsSnapshot,
+    webSearchEnabled,
+    reasoningEnabled,
   });
 }
 
@@ -1129,7 +1229,7 @@ function statusTextForStage(stage, fallback) {
   }
 }
 
-async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot, webSearchEnabled }) {
+async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot, webSearchEnabled, reasoningEnabled }) {
   const assistantWrapper = appendMessage('assistant', '');
   const assistantContent = assistantWrapper.querySelector('.message__content');
   isGenerating = true;
@@ -1258,6 +1358,7 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     system,
     options,
     webSearchEnabled,
+    reasoningEnabled,
   });
 }
 
@@ -1271,7 +1372,7 @@ async function sendMessage() {
   // Snapshot the params at the moment generation starts, so edits made during
   // the response don't leak into this assistant turn's audit trail.
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
-  const webSearchEnabled = isWebSearchAvailable && !!(webSearchToggle && webSearchToggle.checked);
+  const { webSearchEnabled, reasoningEnabled } = getGenerationToggles();
 
   // Render user message
   const userMsg = { role: 'user', content: text };
@@ -1306,6 +1407,7 @@ async function sendMessage() {
     ...chatParams,
     paramsSnapshot,
     webSearchEnabled,
+    reasoningEnabled,
   });
 }
 
@@ -1440,6 +1542,14 @@ settingsModal.addEventListener('click', (e) => {
 presetSelect.addEventListener('change', () => selectPreset(presetSelect.value));
 savePresetBtn.addEventListener('click', savePresetOverwrite);
 newPresetBtn.addEventListener('click', savePresetAsNew);
+ollamaBaseUrlSaveBtn.addEventListener('click', saveOllamaBaseUrlFromSettings);
+ollamaBaseUrlResetBtn.addEventListener('click', resetOllamaBaseUrlToLocal);
+ollamaBaseUrlInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveOllamaBaseUrlFromSettings();
+  }
+});
 tavilyApiKeySaveBtn.addEventListener('click', saveTavilyApiKeyFromSettings);
 tavilyApiKeyDeleteBtn.addEventListener('click', deleteTavilyApiKeyFromSettings);
 tavilyApiKeyInput.addEventListener('keydown', (e) => {

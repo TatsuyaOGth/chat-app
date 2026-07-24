@@ -14,7 +14,7 @@ describe('ipc ollama:get-models', () => {
 
     const result = await mockHandles.get('ollama:get-models')();
 
-    expect(mockOllamaRequest).toHaveBeenCalledWith('GET', '/api/tags', null);
+    expect(mockOllamaRequest).toHaveBeenCalledWith('GET', '/api/tags', null, { baseUrl: 'http://localhost:11434' });
     expect(result).toEqual({ models: ['llama3', 'qwen3:latest'] });
   });
 

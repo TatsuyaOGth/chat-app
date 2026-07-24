@@ -16,6 +16,10 @@ function loadMainWithMocks() {
       delete: jest.fn(),
       reorder: jest.fn(),
     },
+    ollamaConfig: {
+      get: jest.fn(() => ({ baseUrl: 'http://localhost:11434' })),
+      set: jest.fn((baseUrl) => ({ baseUrl })),
+    },
     sessions: {
       list: jest.fn(),
       get: jest.fn(),
