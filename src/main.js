@@ -444,6 +444,7 @@ ipcMain.on('ollama:chat', (event, payload) => {
     options,
     webSearchEnabled = false,
     reasoningEnabled,
+    rawBody,
   } = payload;
 
   let cancelled = false;
@@ -471,6 +472,23 @@ ipcMain.on('ollama:chat', (event, payload) => {
 
   (async () => {
     const { baseUrl } = storage.ollamaConfig.get();
+
+    // Raw-request mode: skip web search / system merging entirely and send
+    // the caller's JSON body straight through to Ollama.
+    if (rawBody) {
+      if (cancelled) return;
+      send('ollama:chat:progress', { requestId, stage: 'generating', message: '回答を生成中…' });
+      ollamaChatStream(
+        { requestId, rawBody },
+        (content) => send('ollama:chat:chunk', { requestId, content, done: false }),
+        () => send('ollama:chat:chunk', { requestId, content: '', done: true }),
+        (err) => send('ollama:chat:error', { requestId, error: err.message || err.code || '不明なエラー' }),
+        { activeRequests, baseUrl },
+        (thinking) => send('ollama:chat:thinking', { requestId, thinking }),
+      );
+      return;
+    }
+
     let effectiveSystem = system;
 
     if (webSearchEnabled) {

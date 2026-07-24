@@ -60,6 +60,16 @@
             aria-label="メッセージ入力"
           ></textarea>
           <label
+            id="raw-request-toggle-wrap"
+            for="raw-request-toggle"
+            class="search-toggle"
+            title="リクエスト全文（JSON）を直接送信する"
+            aria-label="リクエスト全文（JSON）を直接送信する"
+          >
+            <input id="raw-request-toggle" class="search-toggle__input" type="checkbox" />
+            <span class="search-toggle__icon" aria-hidden="true">{ }</span>
+          </label>
+          <label
             id="web-search-toggle-wrap"
             for="web-search-toggle"
             class="search-toggle"

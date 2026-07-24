@@ -104,7 +104,9 @@ function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}, onThinki
   const setTimeoutFn = deps.setTimeoutFn || setTimeout;
   const clearTimeoutFn = deps.clearTimeoutFn || clearTimeout;
 
-  const requestBody = JSON.stringify(buildChatBody(payload));
+  // Raw-request mode: send the caller's JSON body verbatim, bypassing
+  // buildChatBody's messages/system/options assembly entirely.
+  const requestBody = JSON.stringify(payload.rawBody || buildChatBody(payload));
   const reqOptions = {
     hostname: conn.hostname,
     port: conn.port,

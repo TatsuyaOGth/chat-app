@@ -59,9 +59,12 @@ contextBridge.exposeInMainWorld('ollama', {
    * @param {boolean} [payload.reasoningEnabled] Whether the model should think before answering
    *                                              (maps to Ollama's `think` param). Defaults to
    *                                              enabled when omitted; pass `false` to disable.
+   * @param {object} [payload.rawBody] When provided, this exact object is sent as the
+   *                                    /api/chat request body verbatim (raw-request mode) —
+   *                                    all other payload fields above are ignored.
    */
-  chat: (requestId, { model, messages, system, options, webSearchEnabled, reasoningEnabled } = {}) =>
-    ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options, webSearchEnabled, reasoningEnabled }),
+  chat: (requestId, { model, messages, system, options, webSearchEnabled, reasoningEnabled, rawBody } = {}) =>
+    ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options, webSearchEnabled, reasoningEnabled, rawBody }),
 
   /**
    * Cancel an in-progress streaming request by its requestId.
