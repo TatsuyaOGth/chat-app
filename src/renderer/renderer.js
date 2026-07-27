@@ -126,6 +126,13 @@ function configureMarked() {
 
   marked.use({
     renderer: {
+      // 生HTMLパススルーを無効化: <TAG>...</TAG> のような文字列をそのまま
+      // 通すと、DOMPurify が未許可タグ（template/script/style 等）を
+      // 中身ごと丸ごと削除するため、ユーザーが入力した内容が消えてしまう。
+      // ここでエスケープしておくことで、常にリテラル文字列として表示される。
+      html(token) {
+        return escapeHtml(token.text);
+      },
       code(token) {
         const code = token.text || '';
         const rawLang = (token.lang || '').trim().toLowerCase();
