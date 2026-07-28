@@ -1,13 +1,33 @@
 'use strict';
 
 const http = require('node:http');
+const https = require('node:https');
 
 const OLLAMA_HOST = 'localhost';
 const OLLAMA_PORT = 11434;
 const OLLAMA_REQUEST_TIMEOUT_MS = 10_000;
 const INACTIVITY_TIMEOUT_MS = 30_000;
 
-function buildChatBody({ model, messages, system, options }) {
+/**
+ * Resolve a base URL (e.g. "http://192.168.1.50:11434") into the pieces
+ * needed to issue a Node `http`/`https` request. Falls back to the local
+ * default when `baseUrl` is not provided, so existing callers that don't
+ * pass one keep talking to localhost:11434.
+ */
+function resolveOllamaConnection(baseUrl) {
+  const url = new URL(baseUrl || `http://${OLLAMA_HOST}:${OLLAMA_PORT}`);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`サポートされていないプロトコルです: ${url.protocol}`);
+  }
+  return {
+    httpModule: url.protocol === 'https:' ? https : http,
+    hostname: url.hostname,
+    port: url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80),
+    pathPrefix: url.pathname === '/' ? '' : url.pathname.replace(/\/$/, ''),
+  };
+}
+
+function buildChatBody({ model, messages, system, options, think }) {
   const finalMessages = system && system.trim()
     ? [{ role: 'system', content: system }, ...messages]
     : messages;
@@ -19,13 +39,14 @@ function buildChatBody({ model, messages, system, options }) {
     }
   }
 
-  const body = { model, messages: finalMessages, stream: true, think: true };
+  const body = { model, messages: finalMessages, stream: true, think: think !== false };
   if (Object.keys(cleanedOptions).length > 0) body.options = cleanedOptions;
   return body;
 }
 
 function ollamaRequest(method, pathname, body, deps = {}) {
-  const httpModule = deps.httpModule || http;
+  const conn = resolveOllamaConnection(deps.baseUrl);
+  const httpModule = deps.httpModule || conn.httpModule;
   const requestTimeoutMs = deps.requestTimeoutMs ?? OLLAMA_REQUEST_TIMEOUT_MS;
 
   return new Promise((resolve, reject) => {
@@ -43,9 +64,9 @@ function ollamaRequest(method, pathname, body, deps = {}) {
 
     const payload = body ? JSON.stringify(body) : null;
     const options = {
-      hostname: OLLAMA_HOST,
-      port: OLLAMA_PORT,
-      path: pathname,
+      hostname: conn.hostname,
+      port: conn.port,
+      path: conn.pathPrefix + pathname,
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -76,17 +97,20 @@ function ollamaRequest(method, pathname, body, deps = {}) {
 }
 
 function ollamaChatStream(payload, onChunk, onDone, onError, deps = {}, onThinking = null) {
-  const httpModule = deps.httpModule || http;
+  const conn = resolveOllamaConnection(deps.baseUrl);
+  const httpModule = deps.httpModule || conn.httpModule;
   const activeRequests = deps.activeRequests || new Map();
   const inactivityTimeoutMs = deps.inactivityTimeoutMs ?? INACTIVITY_TIMEOUT_MS;
   const setTimeoutFn = deps.setTimeoutFn || setTimeout;
   const clearTimeoutFn = deps.clearTimeoutFn || clearTimeout;
 
-  const requestBody = JSON.stringify(buildChatBody(payload));
+  // Raw-request mode: send the caller's JSON body verbatim, bypassing
+  // buildChatBody's messages/system/options assembly entirely.
+  const requestBody = JSON.stringify(payload.rawBody || buildChatBody(payload));
   const reqOptions = {
-    hostname: OLLAMA_HOST,
-    port: OLLAMA_PORT,
-    path: '/api/chat',
+    hostname: conn.hostname,
+    port: conn.port,
+    path: conn.pathPrefix + '/api/chat',
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -313,6 +337,7 @@ module.exports = {
   OLLAMA_PORT,
   OLLAMA_REQUEST_TIMEOUT_MS,
   INACTIVITY_TIMEOUT_MS,
+  resolveOllamaConnection,
   buildChatBody,
   ollamaRequest,
   ollamaChatStream,

@@ -13,6 +13,13 @@ let messages = [];
 /** Whether the assistant is currently generating a response. */
 let isGenerating = false;
 
+/**
+ * Whether "raw request" mode is on — the message input is treated as a full
+ * JSON body to POST to Ollama's /api/chat verbatim, bypassing the right-pane
+ * params (model/system/options) and the web-search/reasoning toggles.
+ */
+let rawRequestEnabled = false;
+
 /** Monotonically increasing request counter used as request ID. */
 let requestCounter = 0;
 
@@ -59,8 +66,11 @@ let activeSessionId = null;
 const messagesEl = document.getElementById('messages');
 const inputForm = document.getElementById('input-form');
 const messageInput = document.getElementById('message-input');
+const rawRequestToggle = document.getElementById('raw-request-toggle');
 const webSearchToggleWrap = document.getElementById('web-search-toggle-wrap');
 const webSearchToggle = document.getElementById('web-search-toggle');
+const reasoningToggleWrap = document.getElementById('reasoning-toggle-wrap');
+const reasoningToggle = document.getElementById('reasoning-toggle');
 const sendBtn = document.getElementById('send-btn');
 const cancelBtn = document.getElementById('cancel-btn');
 const statusBar = document.getElementById('status-bar');
@@ -77,6 +87,10 @@ const presetNameInput = document.getElementById('preset-name-input');
 const settingsModal = document.getElementById('settings-modal');
 const settingsCloseBtn = document.getElementById('settings-close-btn');
 const settingsPresetList = document.getElementById('settings-preset-list');
+const ollamaBaseUrlInput = document.getElementById('ollama-base-url-input');
+const ollamaBaseUrlSaveBtn = document.getElementById('ollama-base-url-save-btn');
+const ollamaBaseUrlResetBtn = document.getElementById('ollama-base-url-reset-btn');
+const ollamaBaseUrlStatus = document.getElementById('ollama-base-url-status');
 const tavilyApiKeyInput = document.getElementById('tavily-api-key-input');
 const tavilyApiKeySaveBtn = document.getElementById('tavily-api-key-save-btn');
 const tavilyApiKeyDeleteBtn = document.getElementById('tavily-api-key-delete-btn');
@@ -112,6 +126,13 @@ function configureMarked() {
 
   marked.use({
     renderer: {
+      // 生HTMLパススルーを無効化: <TAG>...</TAG> のような文字列をそのまま
+      // 通すと、DOMPurify が未許可タグ（template/script/style 等）を
+      // 中身ごと丸ごと削除するため、ユーザーが入力した内容が消えてしまう。
+      // ここでエスケープしておくことで、常にリテラル文字列として表示される。
+      html(token) {
+        return escapeHtml(token.text);
+      },
       code(token) {
         const code = token.text || '';
         const rawLang = (token.lang || '').trim().toLowerCase();
@@ -223,6 +244,55 @@ function setWebSearchAvailability(configured) {
   }
 }
 
+/**
+ * Read the current state of the input-row toggles. Called fresh at the
+ * moment a generation starts (initial send or edit-and-resend) so both
+ * paths honor whatever the user has toggled right now, rather than one of
+ * them silently falling back to defaults.
+ */
+function getGenerationToggles() {
+  return {
+    webSearchEnabled: isWebSearchAvailable && !!(webSearchToggle && webSearchToggle.checked),
+    reasoningEnabled: !reasoningToggle || reasoningToggle.checked,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Raw request mode
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-apply the right-pane disabled state to every control it currently
+ * contains. Called after any rebuild of the pane's contents (param editor
+ * re-render, preset list re-render) so a rebuild triggered while raw-request
+ * mode is on can't silently re-enable controls.
+ */
+function applyRightPaneDisabledState() {
+  rightPaneEl.classList.toggle('right-pane--disabled', rawRequestEnabled);
+  rightPaneEl.querySelectorAll('select, input, textarea, button').forEach((el) => {
+    if (el === rightPaneToggle) return;
+    el.disabled = rawRequestEnabled;
+  });
+}
+
+function setAuxToggleDisabled(wrap, input, disabled) {
+  if (input) input.disabled = disabled;
+  if (wrap) wrap.classList.toggle('search-toggle--disabled', disabled);
+}
+
+function setRawRequestMode(enabled) {
+  if (rawRequestEnabled === enabled) return;
+  rawRequestEnabled = enabled;
+  messageInput.value = '';
+  messageInput.placeholder = enabled
+    ? 'Ollama へ送信する JSON 全文を入力（例: {"model":"llama3","messages":[{"role":"user","content":"..."}]}）'
+    : 'メッセージを入力… (Enter で送信、Shift+Enter で改行)';
+  applyRightPaneDisabledState();
+  setAuxToggleDisabled(webSearchToggleWrap, webSearchToggle, enabled);
+  setAuxToggleDisabled(reasoningToggleWrap, reasoningToggle, enabled);
+  updateSendButton();
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -275,6 +345,7 @@ function renderPresetSelect() {
 
   presetSelect.value = activePresetId ?? '';
   savePresetBtn.disabled = !activePresetId;
+  applyRightPaneDisabledState();
 }
 
 function selectPreset(id) {
@@ -336,11 +407,90 @@ function renderEditor() {
       updateSendButton();
     },
   });
+  applyRightPaneDisabledState();
 }
 
 // ---------------------------------------------------------------------------
 // Settings modal
 // ---------------------------------------------------------------------------
+
+const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
+
+function setOllamaStatus(text, level = 'info') {
+  if (!ollamaBaseUrlStatus) return;
+  ollamaBaseUrlStatus.textContent = text;
+  ollamaBaseUrlStatus.className = 'ollama-settings__status';
+  if (level === 'ok') ollamaBaseUrlStatus.classList.add('ollama-settings__status--ok');
+  if (level === 'warn') ollamaBaseUrlStatus.classList.add('ollama-settings__status--warn');
+  if (level === 'error') ollamaBaseUrlStatus.classList.add('ollama-settings__status--error');
+}
+
+async function loadOllamaConfig() {
+  if (!window.ollama || !ollamaBaseUrlInput) return;
+  try {
+    const { baseUrl } = await window.ollama.getConfig();
+    ollamaBaseUrlInput.value = baseUrl || OLLAMA_DEFAULT_BASE_URL;
+    setOllamaStatus('');
+  } catch (err) {
+    setOllamaStatus(`状態取得エラー: ${err.message || String(err)}`, 'error');
+  }
+}
+
+/**
+ * Incremented on every call to saveOllamaBaseUrlFromSettings(). A call
+ * captures its own token and checks it against this counter before each
+ * UI-visible side effect, so that a slow/older call (e.g. a connection test
+ * against an unreachable host) can't overwrite the status shown by a newer
+ * call started in the meantime (via the reset button or repeated Enter,
+ * neither of which is blocked by the save button's disabled state).
+ */
+let ollamaConfigSaveToken = 0;
+
+async function saveOllamaBaseUrlFromSettings() {
+  if (!window.ollama || !ollamaBaseUrlInput) return;
+  const url = ollamaBaseUrlInput.value.trim();
+  if (!url) {
+    setOllamaStatus('URL を入力してください', 'warn');
+    ollamaBaseUrlInput.focus();
+    return;
+  }
+
+  const token = ++ollamaConfigSaveToken;
+  const isStale = () => token !== ollamaConfigSaveToken;
+
+  ollamaBaseUrlSaveBtn.disabled = true;
+  setOllamaStatus('保存中…');
+  try {
+    const { ok, error, baseUrl } = await window.ollama.setConfig(url);
+    if (isStale()) return;
+    if (!ok) {
+      setOllamaStatus(`保存エラー: ${error || '不明なエラー'}`, 'error');
+      return;
+    }
+    ollamaBaseUrlInput.value = baseUrl;
+
+    setOllamaStatus('接続を確認中…');
+    const test = await window.ollama.testConnection(baseUrl);
+    if (isStale()) return;
+    if (test.ok) {
+      setOllamaStatus(`保存しました（接続成功・モデル${test.modelCount}件）`, 'ok');
+    } else {
+      setOllamaStatus(`保存しました（接続確認に失敗: ${test.error || '不明なエラー'}）`, 'warn');
+    }
+
+    await loadModels();
+  } catch (err) {
+    if (!isStale()) setOllamaStatus(`保存エラー: ${err.message || String(err)}`, 'error');
+  } finally {
+    if (!isStale()) ollamaBaseUrlSaveBtn.disabled = false;
+  }
+}
+
+function resetOllamaBaseUrlToLocal() {
+  if (!ollamaBaseUrlInput) return;
+  ollamaBaseUrlInput.value = OLLAMA_DEFAULT_BASE_URL;
+  saveOllamaBaseUrlFromSettings();
+}
 
 function setTavilyStatus(text, level = 'info') {
   if (!tavilyApiKeyStatus) return;
@@ -438,6 +588,7 @@ async function deleteTavilyApiKeyFromSettings() {
 
 function openSettings() {
   renderSettingsPresetList();
+  loadOllamaConfig();
   loadTavilyConfigStatus();
   if (typeof settingsModal.showModal === 'function') {
     settingsModal.showModal();
@@ -643,20 +794,20 @@ async function loadSession(id) {
   messages = (session.messages || []).map((m) => {
     // Strip any persisted UI-only fields before re-rendering.
     if (m.role === 'assistant') {
-      return { role: m.role, content: m.content, paramsSnapshot: m.paramsSnapshot };
+      return { role: m.role, content: m.content, paramsSnapshot: m.paramsSnapshot, raw: !!m.raw };
     }
-    return { role: m.role, content: m.content };
+    return { role: m.role, content: m.content, raw: !!m.raw };
   });
 
   // Re-render messages
   messagesEl.innerHTML = '';
   for (const m of messages) {
-    const el = appendMessage(m.role, m.content);
-    if (m.role === 'user') {
+    const el = appendMessage(m.role, m.content, { raw: m.raw });
+    if (m.role === 'user' && !m.raw) {
       attachUserEditButton(el, m);
     }
     if (m.role === 'assistant') {
-      attachAssistantButtons(el, m.paramsSnapshot || null);
+      attachAssistantButtons(el, m.raw ? null : (m.paramsSnapshot || null));
     }
   }
 
@@ -678,9 +829,11 @@ async function deleteSession(id) {
 /**
  * The conversation history we send to Ollama uses only `role` and `content`.
  * `paramsSnapshot` is a UI/audit field and must be stripped first.
+ * Raw-request turns are excluded: their JSON body is self-contained and
+ * arbitrary, so they must not leak into a later normal-mode request's context.
  */
 function messagesForRequest() {
-  return messages.map(({ role, content }) => ({ role, content }));
+  return messages.filter((m) => !m.raw).map(({ role, content }) => ({ role, content }));
 }
 
 /** Derive a session title from a user message (first ~30 chars, single line). */
@@ -727,18 +880,25 @@ function createThinkingIndicator() {
   return el;
 }
 
-function appendMessage(role, initialText) {
+function appendMessage(role, initialText, opts = {}) {
   const wrapper = document.createElement('div');
   wrapper.classList.add('message', `message--${role}`);
+  if (opts.raw) wrapper.classList.add('message--raw');
 
   const labelEl = document.createElement('span');
   labelEl.classList.add('message__role');
-  labelEl.textContent = role === 'user' ? 'You' : 'Assistant';
+  labelEl.textContent = role === 'user' ? (opts.raw ? 'You (JSON)' : 'You') : 'Assistant';
 
   const content = document.createElement('div');
   content.classList.add('message__content');
   content.dataset.raw = initialText;
-  content.innerHTML = renderMarkdown(initialText);
+  // Render the raw JSON a user sent as a fenced code block so it gets the
+  // same syntax highlighting as any other code block. Only applies to the
+  // user's own message — the model's reply is arbitrary text, not JSON.
+  const displayText = (opts.raw && role === 'user')
+    ? `\`\`\`json\n${initialText}\n\`\`\``
+    : initialText;
+  content.innerHTML = renderMarkdown(displayText);
 
   wrapper.appendChild(labelEl);
   wrapper.appendChild(content);
@@ -1017,10 +1177,13 @@ async function applyPromptEdit(userMsg, wrapper, nextText) {
   const chatParams = getChatRequestParams();
   if (!chatParams) return;
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
+  const { webSearchEnabled, reasoningEnabled } = getGenerationToggles();
   await startAssistantGeneration({
     sessionId: activeSessionId,
     ...chatParams,
     paramsSnapshot,
+    webSearchEnabled,
+    reasoningEnabled,
   });
 }
 
@@ -1111,6 +1274,12 @@ function buildSnapshotTable(snapshot) {
 
 function updateSendButton() {
   const hasText = messageInput.value.trim().length > 0;
+  if (rawRequestEnabled) {
+    // JSON validity is checked at submit time (see sendRawRequest); here we
+    // only gate on non-empty text, same as the model-less state in normal mode.
+    sendBtn.disabled = !hasText || isGenerating;
+    return;
+  }
   const hasModel = window.Params.isCustomized(workingParams.model);
   sendBtn.disabled = !hasText || !hasModel || isGenerating;
 }
@@ -1129,13 +1298,13 @@ function statusTextForStage(stage, fallback) {
   }
 }
 
-async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot, webSearchEnabled }) {
+async function startAssistantGeneration({ sessionId, model, system, options, paramsSnapshot, webSearchEnabled, reasoningEnabled, rawBody }) {
   const assistantWrapper = appendMessage('assistant', '');
   const assistantContent = assistantWrapper.querySelector('.message__content');
   isGenerating = true;
   sendBtn.disabled = true;
   cancelBtn.style.display = '';
-  setStatus(webSearchEnabled ? 'ウェブ検索を開始中…' : '生成中…');
+  setStatus(rawBody ? '生成中…' : (webSearchEnabled ? 'ウェブ検索を開始中…' : '生成中…'));
 
   // Thinking indicator — shown until first content chunk arrives.
   const thinkingEl = createThinkingIndicator();
@@ -1213,13 +1382,11 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
       setStatus(`エラー: ${error}`, 'error');
     },
     onPersistAssistant: async ({ sessionId: currentSessionId, paramsSnapshot: currentParamsSnapshot, responseText }) => {
-      const assistantMsg = {
-        role: 'assistant',
-        content: responseText,
-        paramsSnapshot: currentParamsSnapshot,
-      };
+      const assistantMsg = rawBody
+        ? { role: 'assistant', content: responseText, raw: true }
+        : { role: 'assistant', content: responseText, paramsSnapshot: currentParamsSnapshot };
       messages.push(assistantMsg);
-      attachAssistantButtons(assistantWrapper, currentParamsSnapshot);
+      attachAssistantButtons(assistantWrapper, rawBody ? null : currentParamsSnapshot);
       try {
         await window.sessions.appendMessage(currentSessionId, assistantMsg);
         await loadSessions();
@@ -1244,7 +1411,7 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     unsubThinking: routing.unsubThinking,
   });
 
-  window.ollama.checkLoaded(model).then(({ loaded }) => {
+  window.ollama.checkLoaded(rawBody ? rawBody.model : model).then(({ loaded }) => {
     const label = lifecycle.updateThinkingLabel(loaded);
     if (label) {
       const labelEl = thinkingEl.querySelector('.thinking-indicator__label');
@@ -1252,18 +1419,76 @@ async function startAssistantGeneration({ sessionId, model, system, options, par
     }
   }).catch(() => { /* ignore; label stays at default */ });
 
-  window.ollama.chat(requestId, {
-    model,
-    messages: messagesForRequest(),
-    system,
-    options,
-    webSearchEnabled,
-  });
+  window.ollama.chat(requestId, rawBody
+    ? { rawBody }
+    : {
+      model,
+      messages: messagesForRequest(),
+      system,
+      options,
+      webSearchEnabled,
+      reasoningEnabled,
+    });
+}
+
+/**
+ * Raw-request mode: the textarea holds a full JSON body to POST to
+ * Ollama's /api/chat verbatim (model, messages, options, stream, think — all
+ * caller-controlled). Bypasses the right-pane params, web search, and the
+ * reasoning toggle entirely. The turn is still saved to the session so it
+ * stays visible on reload, but is flagged `raw` so `messagesForRequest()`
+ * excludes it from the context of later normal-mode messages — its message
+ * shape is arbitrary and may not match the app's plain {role, content} turns.
+ */
+async function sendRawRequest(rawText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (err) {
+    setStatus(`JSON の解析に失敗しました: ${err.message}`, 'error');
+    return;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    setStatus('JSON はオブジェクト（{...}）形式である必要があります', 'error');
+    return;
+  }
+
+  const userMsg = { role: 'user', content: rawText, raw: true };
+  messages.push(userMsg);
+  const userMsgEl = appendMessage('user', rawText, { raw: true });
+  const elRect = userMsgEl.getBoundingClientRect();
+  const containerRect = messagesEl.getBoundingClientRect();
+  messagesEl.scrollTo({ top: messagesEl.scrollTop + elRect.top - containerRect.top, behavior: 'smooth' });
+  messageInput.value = '';
+  updateSendButton();
+
+  let sessionId;
+  try {
+    sessionId = await ensureSession(rawText);
+    const savedSession = await window.sessions.appendMessage(sessionId, userMsg);
+    if (!savedSession) throw new Error('セッションへの保存に失敗しました');
+  } catch (err) {
+    messages.pop();
+    userMsgEl.remove();
+    messageInput.value = rawText;
+    updateSendButton();
+    const errorMessage = err instanceof Error
+      ? (err.message || '不明なエラー')
+      : (String(err) || '不明なエラー');
+    setStatus(`セッション保存エラー: ${errorMessage}`, 'error');
+    return;
+  }
+
+  await startAssistantGeneration({ sessionId, rawBody: parsed });
 }
 
 async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || isGenerating) return;
+
+  if (rawRequestEnabled) {
+    return sendRawRequest(text);
+  }
 
   const chatParams = getChatRequestParams();
   if (!chatParams) return;
@@ -1271,7 +1496,7 @@ async function sendMessage() {
   // Snapshot the params at the moment generation starts, so edits made during
   // the response don't leak into this assistant turn's audit trail.
   const paramsSnapshot = JSON.parse(JSON.stringify(workingParams));
-  const webSearchEnabled = isWebSearchAvailable && !!(webSearchToggle && webSearchToggle.checked);
+  const { webSearchEnabled, reasoningEnabled } = getGenerationToggles();
 
   // Render user message
   const userMsg = { role: 'user', content: text };
@@ -1306,6 +1531,7 @@ async function sendMessage() {
     ...chatParams,
     paramsSnapshot,
     webSearchEnabled,
+    reasoningEnabled,
   });
 }
 
@@ -1440,6 +1666,14 @@ settingsModal.addEventListener('click', (e) => {
 presetSelect.addEventListener('change', () => selectPreset(presetSelect.value));
 savePresetBtn.addEventListener('click', savePresetOverwrite);
 newPresetBtn.addEventListener('click', savePresetAsNew);
+ollamaBaseUrlSaveBtn.addEventListener('click', saveOllamaBaseUrlFromSettings);
+ollamaBaseUrlResetBtn.addEventListener('click', resetOllamaBaseUrlToLocal);
+ollamaBaseUrlInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveOllamaBaseUrlFromSettings();
+  }
+});
 tavilyApiKeySaveBtn.addEventListener('click', saveTavilyApiKeyFromSettings);
 tavilyApiKeyDeleteBtn.addEventListener('click', deleteTavilyApiKeyFromSettings);
 tavilyApiKeyInput.addEventListener('keydown', (e) => {
@@ -1454,6 +1688,8 @@ cancelBtn.addEventListener('click', () => {
     window.ollama.cancel(currentRequestId);
   }
 });
+
+rawRequestToggle.addEventListener('change', () => setRawRequestMode(rawRequestToggle.checked));
 
 messageInput.addEventListener('input', updateSendButton);
 

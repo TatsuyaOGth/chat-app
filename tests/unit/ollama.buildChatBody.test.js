@@ -46,4 +46,21 @@ describe('buildChatBody', () => {
       },
     });
   });
+
+  test('think: false を明示すると推論を無効化する', () => {
+    const body = buildChatBody({
+      model: 'qwen3',
+      messages: [{ role: 'user', content: 'hello' }],
+      system: '',
+      options: null,
+      think: false,
+    });
+
+    expect(body).toEqual({
+      model: 'qwen3',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+      think: false,
+    });
+  });
 });

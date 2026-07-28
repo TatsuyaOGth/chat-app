@@ -40,11 +40,18 @@ describe('preload bridge', () => {
 
     ollama.getModels();
     ollama.checkLoaded('llama3');
+    ollama.getConfig();
+    ollama.setConfig('http://192.168.1.50:11434');
+    ollama.testConnection('http://192.168.1.50:11434');
     ollama.chat('req-1', { model: 'llama3', messages: [] });
+    ollama.chat('req-2', { model: 'qwen3', messages: [], reasoningEnabled: false });
     ollama.cancel('req-1');
 
     expect(mockInvoke).toHaveBeenNthCalledWith(1, 'ollama:get-models');
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'ollama:check-loaded', 'llama3');
+    expect(mockInvoke).toHaveBeenNthCalledWith(3, 'ollama:get-config');
+    expect(mockInvoke).toHaveBeenNthCalledWith(4, 'ollama:set-config', 'http://192.168.1.50:11434');
+    expect(mockInvoke).toHaveBeenNthCalledWith(5, 'ollama:test-connection', 'http://192.168.1.50:11434');
     expect(mockSend).toHaveBeenNthCalledWith(1, 'ollama:chat', {
       requestId: 'req-1',
       model: 'llama3',
@@ -52,8 +59,18 @@ describe('preload bridge', () => {
       system: undefined,
       options: undefined,
       webSearchEnabled: undefined,
+      reasoningEnabled: undefined,
     });
-    expect(mockSend).toHaveBeenNthCalledWith(2, 'ollama:chat:cancel', { requestId: 'req-1' });
+    expect(mockSend).toHaveBeenNthCalledWith(2, 'ollama:chat', {
+      requestId: 'req-2',
+      model: 'qwen3',
+      messages: [],
+      system: undefined,
+      options: undefined,
+      webSearchEnabled: undefined,
+      reasoningEnabled: false,
+    });
+    expect(mockSend).toHaveBeenNthCalledWith(3, 'ollama:chat:cancel', { requestId: 'req-1' });
   });
 
   test('tavily API が正しい IPC チャネルへ転送する', () => {

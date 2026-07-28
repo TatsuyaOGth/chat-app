@@ -71,6 +71,35 @@ describe('ipc ollama:chat', () => {
     ]);
   });
 
+  test('reasoningEnabled: false は ollamaChatStream へ think: false として渡す', () => {
+    const { mockEvents, mockOllamaChatStream } = loadMainWithMocks();
+    const sender = {
+      isDestroyed: jest.fn(() => false),
+      send: jest.fn(),
+    };
+    const payload = {
+      requestId: 'req-think',
+      model: 'qwen3',
+      messages: [{ role: 'user', content: 'hello' }],
+      reasoningEnabled: false,
+    };
+
+    mockOllamaChatStream.mockImplementation((streamPayload, onChunk, onDone) => {
+      onDone();
+    });
+
+    mockEvents.get('ollama:chat')({ sender }, payload);
+
+    expect(mockOllamaChatStream).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'req-think', think: false }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({ activeRequests: expect.any(Map) }),
+      expect.any(Function),
+    );
+  });
+
   test('stream error を renderer の error イベントへ転送する', () => {
     const { mockEvents, mockOllamaChatStream } = loadMainWithMocks();
     const sender = {

@@ -23,6 +23,28 @@ contextBridge.exposeInMainWorld('ollama', {
   checkLoaded: (model) => ipcRenderer.invoke('ollama:check-loaded', model),
 
   /**
+   * Get the currently configured Ollama connection.
+   * @returns {Promise<{ baseUrl: string }>}
+   */
+  getConfig: () => ipcRenderer.invoke('ollama:get-config'),
+
+  /**
+   * Save the Ollama base URL (e.g. "http://192.168.1.50:11434").
+   * Validates the URL format only; persisting does not require the server
+   * to be reachable.
+   * @param {string} baseUrl
+   * @returns {Promise<{ ok: boolean, baseUrl?: string, error?: string }>}
+   */
+  setConfig: (baseUrl) => ipcRenderer.invoke('ollama:set-config', baseUrl),
+
+  /**
+   * Test connectivity to an Ollama server via GET /api/tags.
+   * @param {string} [baseUrl] Defaults to the saved config when omitted.
+   * @returns {Promise<{ ok: boolean, modelCount?: number, error?: string }>}
+   */
+  testConnection: (baseUrl) => ipcRenderer.invoke('ollama:test-connection', baseUrl),
+
+  /**
    * Send a chat request and receive the response as a stream.
    *
    * @param {string} requestId  Caller-generated unique ID for this request.
@@ -34,9 +56,15 @@ contextBridge.exposeInMainWorld('ollama', {
    *                                   Keys with `null`/`undefined` values are dropped so
    *                                   Ollama uses its defaults.
    * @param {boolean} [payload.webSearchEnabled] Whether to run web search before generation.
+   * @param {boolean} [payload.reasoningEnabled] Whether the model should think before answering
+   *                                              (maps to Ollama's `think` param). Defaults to
+   *                                              enabled when omitted; pass `false` to disable.
+   * @param {object} [payload.rawBody] When provided, this exact object is sent as the
+   *                                    /api/chat request body verbatim (raw-request mode) —
+   *                                    all other payload fields above are ignored.
    */
-  chat: (requestId, { model, messages, system, options, webSearchEnabled } = {}) =>
-    ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options, webSearchEnabled }),
+  chat: (requestId, { model, messages, system, options, webSearchEnabled, reasoningEnabled, rawBody } = {}) =>
+    ipcRenderer.send('ollama:chat', { requestId, model, messages, system, options, webSearchEnabled, reasoningEnabled, rawBody }),
 
   /**
    * Cancel an in-progress streaming request by its requestId.

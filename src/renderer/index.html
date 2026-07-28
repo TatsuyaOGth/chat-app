@@ -60,6 +60,16 @@
             aria-label="メッセージ入力"
           ></textarea>
           <label
+            id="raw-request-toggle-wrap"
+            for="raw-request-toggle"
+            class="search-toggle"
+            title="リクエスト全文（JSON）を直接送信する"
+            aria-label="リクエスト全文（JSON）を直接送信する"
+          >
+            <input id="raw-request-toggle" class="search-toggle__input" type="checkbox" />
+            <span class="search-toggle__icon" aria-hidden="true">{ }</span>
+          </label>
+          <label
             id="web-search-toggle-wrap"
             for="web-search-toggle"
             class="search-toggle"
@@ -69,6 +79,16 @@
           >
             <input id="web-search-toggle" class="search-toggle__input" type="checkbox" />
             <span class="search-toggle__icon" aria-hidden="true">🌐</span>
+          </label>
+          <label
+            id="reasoning-toggle-wrap"
+            for="reasoning-toggle"
+            class="search-toggle"
+            title="推論を行う"
+            aria-label="推論を行う"
+          >
+            <input id="reasoning-toggle" class="search-toggle__input" type="checkbox" checked />
+            <span class="search-toggle__icon" aria-hidden="true">🧠</span>
           </label>
           <button id="send-btn" type="submit" class="btn btn-primary" disabled>送信</button>
           <button id="cancel-btn" type="button" class="btn btn-secondary" style="display:none" aria-label="生成を停止">停止</button>
@@ -141,6 +161,33 @@
             ドラッグ＆ドロップで並べ替えできます。
           </p>
           <ul id="settings-preset-list" class="preset-list" aria-label="プリセット一覧"></ul>
+        </section>
+
+        <section class="settings-section settings-section--ollama">
+          <h3 class="settings-section__heading">Ollama 接続先</h3>
+          <p class="settings-section__hint">
+            LAN上の別マシンで動作している Ollama に接続できます。例: http://192.168.1.50:11434
+          </p>
+
+          <div class="ollama-settings">
+            <label for="ollama-base-url-input" class="label">サーバーURL</label>
+            <input
+              id="ollama-base-url-input"
+              class="ollama-settings__input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="http://localhost:11434"
+              aria-label="Ollama サーバーURL"
+            />
+            <button id="ollama-base-url-save-btn" type="button" class="btn btn-secondary ollama-settings__save-btn">
+              保存
+            </button>
+            <button id="ollama-base-url-reset-btn" type="button" class="btn btn-secondary ollama-settings__reset-btn">
+              ローカルに戻す
+            </button>
+            <p id="ollama-base-url-status" class="ollama-settings__status" aria-live="polite"></p>
+          </div>
         </section>
 
         <section class="settings-section settings-section--tavily">
